@@ -1,0 +1,131 @@
+# Intermediate Student Model (Stage 1: 1.0x → 0.75x equivalent)
+# Bridge between current student (64ch) and extreme student (32ch)
+save_dir: workspace/nanodet_intermediate_student
+
+model:
+  weight_averager:
+    name: ExpMovingAverager
+    decay: 0.9998
+  arch:
+    name: OneStageDetector
+    backbone:
+      name: ShuffleNetV2
+      model_size: 1.0x  # Keep same backbone for compatibility
+      out_stages: [2,3,4]
+      activation: LeakyReLU
+    fpn:
+      name: GhostPAN
+      in_channels: [116, 232, 464]  # Same as teacher
+      out_channels: 48  # Intermediate: 64 → 48 (25% reduction)
+      kernel_size: 3    # Smaller kernel for efficiency
+      num_extra_level: 1
+      use_depthwise: true
+      activation: LeakyReLU
+    head:
+      name: NanoDetHead
+      num_classes: 24
+      input_channel: 48  # Match fpn out_channels
+      feat_channels: 48  # Intermediate head size
+      stacked_convs: 1   # Reduced from 2 to 1
+      kernel_size: 3     # Smaller kernel
+      strides: [8, 16, 32]  # Simplified strides
+      activation: LeakyReLU
+      reg_max: 7
+      norm_cfg:
+        type: BN
+      loss:
+        loss_qfl:
+          name: QualityFocalLoss
+          use_sigmoid: true
+          beta: 2.0
+          loss_weight: 1.0
+        loss_dfl:
+          name: DistributionFocalLoss
+          loss_weight: 0.25
+        loss_bbox:
+          name: GIoULoss
+          loss_weight: 2.0
+
+# Knowledge Distillation from current student
+distillation:
+  teacher_config: "config_ultra_student.yml"
+  teacher_checkpoint: "workspace/nanodet_ultra_student/model_best/model_best.ckpt"
+  alpha: 0.7      # High distillation weight (compatible architectures)
+  temperature: 3   # Moderate temperature
+  
+  # Feature distillation - compatible dimensions
+  feature_loss_weight: 0.5
+  feature_layers: ["backbone.stage4", "neck"]  # Focus on compatible layers
+  
+  # Response distillation  
+  response_loss_weight: 0.4
+
+data:
+  train:
+    name: XMLDataset
+    class_names: &class_names [
+      "Bollworm", "Anomala corpulenta", "Striped rice bore", "Armyworm", "Meadow borer",
+      "holotrichia parallela", "Stem borer", "Nematode trench", "Little Gecko",
+      "Rice Leaf Roller", "Plutella xylostella", "Melahotus", "Spodoptera cabbage",
+      "Athetis lepigone", "Gryllotalpa orientalis", "Scotogramma trifolii Rottemberg",
+      "Spodoptera exigua", "Yellow tiger", "Agriotes fuscicollis Miwa", "eight-character tiger",
+      "Spodoptera litura", "Land tiger", "Rice planthopper", "holotrichia oblita"
+    ]
+    img_path: /home/jeavo/Pest_24/images
+    ann_path: /home/jeavo/Pest_24/Annotations_train
+    input_size: [288,288]  # Intermediate size: 320→288→256
+    keep_ratio: false
+    pipeline:
+      perspective: 0.0
+      scale: [0.6, 1.4]
+      stretch: [[0.8, 1.2], [0.8, 1.2]]
+      rotation: 0
+      shear: 0
+      translate: 0.15
+      flip: 0.5
+      brightness: 0.15
+      contrast: [0.7, 1.3]
+      saturation: [0.7, 1.3]
+      normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395]]
+
+  val:
+    name: CocoDataset
+    img_path: /home/jeavo/Pest_24/images
+    ann_path: /home/jeavo/Pest_24/annotations_coco/val_fixed.json
+    input_size: [288,288]
+    keep_ratio: false
+    pipeline:
+      normalize: [[103.53, 116.28, 123.675], [57.375, 57.12, 58.395]]
+
+device:
+  gpu_ids: [0]
+  workers_per_gpu: 4
+  batchsize_per_gpu: 18
+  precision: 16
+
+schedule:
+  optimizer:
+    name: AdamW
+    lr: 0.006  # Moderate LR
+    weight_decay: 0.02
+  warmup:
+    name: linear
+    steps: 400
+    ratio: 0.001
+  total_epochs: 50  # Quick training
+  lr_schedule:
+    name: CosineAnnealingLR
+    T_max: 50
+    eta_min: 0.00001
+  val_intervals: 5
+
+grad_clip: 15
+
+evaluator:
+  name: CocoDetectionEvaluator
+  save_key: mAP
+
+log:
+  interval: 10
+
+class_names: *class_names
