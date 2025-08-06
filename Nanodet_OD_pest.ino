@@ -157,7 +157,9 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
   logMessage(LOG_INFO, "🎨 Using test pattern " + String(current_test_pattern));
   
   // Create temporary HWC buffer first
-  uint8_t* temp_hwc_buffer = (uint8_t*)malloc(MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS);
+  // Use signed buffer to correctly store quantized INT8 values
+  size_t hwc_bytes = MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS;
+  int8_t* temp_hwc_buffer = (int8_t*)malloc(hwc_bytes);
   if (!temp_hwc_buffer) {
     logMessage(LOG_ERROR, "Failed to allocate temporary HWC buffer");
     return false;
