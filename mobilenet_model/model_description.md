@@ -1,6 +1,8 @@
 The trained model is a custom model based on the SSD MobilenetV2 architecture and exported as a TFLite model after a full INT8 quantization. 
 This folder features the model as C header (.h) and as a .tflite, the training script and the export and quantization script.
 
+The list of the packages we used in our training environment is avaible in requirements_mobilenet.txt.
+
 --MODEL DESCRIPTION--
 ** Input **
 - Image input: RGB, resized to 224×224, values scaled to [0,1]
