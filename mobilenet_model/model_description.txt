@@ -1,0 +1,25 @@
+The trained model is a custom model based on the SSD MobilenetV2 architecture and exported as a TFLite model after a full INT8 quantization. 
+This folder features the model as C header (.h) and as a .tflite, the training script and the export and quantization script.
+
+Model description:
+**Input: 
+- Images: RGB, 224x224, with each pixel normalized to [0,1] by dividing by 255.
+- Labels:  
+Class ID (integer) for the boject in the image. 
+Bounding box as [x_center, y_center, width, height], each normalized to [0,1] relative to image size. These are parsed from Pascal-VOC XML and converted to center-format. 
+If an image has multiple objects, the script keeps only the first one. 
+- Class set:
+Built by scanning the Pascal VOC XML dataset, Pest24.
+
+**Backbone and head:
+- Backbone: MobileNetV2 with alpha=0.35, include_top=False, ImageNet weights, initially frozen.
+- Neck/Pooling: GlobalAveragePooling2D to reduce the spatial feature map to a vector.
+- Detection head (signel-stage, single prediction): 
+    --> Dense(256, ReLU) → BatchNorm → Dropout(0.2)
+    --> Dense(128, ReLU) → BatchNorm → Dropout(0.1)
+    --> Two parallel output layers: class_output: Dense(num_classes), softmax
+                                    bbox_output: Dense(4), linear → predicts [x_c, y_c, w, h] (normalized)
+
+!! Not a classic multi-anchor SSD/FPN but a single box + single class prediction per image. 
+
+            
