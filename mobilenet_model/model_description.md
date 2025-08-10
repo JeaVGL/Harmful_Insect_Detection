@@ -4,6 +4,7 @@ This folder features the model as C header (.h) and as a .tflite, the training s
 The list of the packages we used in our training environment is avaible in requirements_mobilenet.txt.
 
 --MODEL DESCRIPTION--
+
 ** Input **
 - Image input: RGB, resized to 224×224, values scaled to [0,1]
 - Annotations: Pascal-VOC XML
