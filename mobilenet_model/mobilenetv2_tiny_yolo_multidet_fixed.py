@@ -267,6 +267,10 @@ def decode_predictions(pred, conf_thresh=0.25, iou_thresh=0.45, max_dets=100):
     # Build grid
     gy, gx = tf.meshgrid(tf.range(S_), tf.range(S_), indexing="ij")
     gx = tf.cast(gx, tf.float32); gy = tf.cast(gy, tf.float32)
+    
+    # Expand grid dimensions to match anchor dimension [S, S] -> [S, S, 1] -> [S, S, A]
+    gx = tf.expand_dims(gx, axis=-1)  # [S, S, 1]
+    gy = tf.expand_dims(gy, axis=-1)  # [S, S, 1]
 
     # Recover boxes (normalized 0..1)
     cell_x = (box[..., 0] + gx) / float(S_)        # x_center
