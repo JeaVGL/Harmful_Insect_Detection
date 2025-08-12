@@ -132,10 +132,10 @@ bool validateConfiguration() {
 
 // Check tensor integrity and memory state
 void checkTensorIntegrity(const char* stage) {
-  logMessage(LOG_INFO, "🔍 TENSOR INTEGRITY CHECK: " + String(stage));
+  logMessage(LOG_INFO, " TENSOR INTEGRITY CHECK: " + String(stage));
   
   if (!input || !output_tensor || !interpreter) {
-    logMessage(LOG_ERROR, "  ❌ Tensor pointers are null!");
+    logMessage(LOG_ERROR, "   Tensor pointers are null!");
     return;
   }
   
@@ -201,7 +201,7 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
     return false;
   }
   
-  logMessage(LOG_INFO, "🎨 Processing real camera image");
+  logMessage(LOG_INFO, " Processing real camera image");
   
   // Create temporary HWC buffer first
   uint8_t* temp_hwc_buffer = (uint8_t*)malloc(MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS);
@@ -304,7 +304,7 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
     // FALLBACK: If JPEG data is too similar between frames, force variation
     static uint32_t last_jpeg_seed = 0;
     if (abs((int)(jpeg_seed - last_jpeg_seed)) < 1000) {
-      logMessage(LOG_WARNING, "⚠️ JPEG data too similar, forcing input variation");
+      logMessage(LOG_WARNING, "JPEG data too similar, forcing input variation");
       
       // Force variation by adding frame-specific patterns
       for (int i = 0; i < 1000; i += 10) {
@@ -399,11 +399,11 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
     logMessage(LOG_INFO, "   Preprocessing variation: " + String(changed_count) + "/3 values changed");
     
     if (changed_count == 0) {
-      logMessage(LOG_ERROR, "🚨 CRITICAL: Preprocessing is NOT creating variation!");
+      logMessage(LOG_ERROR, " CRITICAL: Preprocessing is NOT creating variation!");
     } else if (changed_count < 2) {
-      logMessage(LOG_WARNING, "⚠️ WARNING: Very little preprocessing variation (" + String(changed_count) + "/3)");
+      logMessage(LOG_WARNING, " WARNING: Very little preprocessing variation (" + String(changed_count) + "/3)");
     } else {
-      logMessage(LOG_INFO, "✅ Preprocessing is creating good variation");
+      logMessage(LOG_INFO, " Preprocessing is creating good variation");
     }
   }
   
@@ -549,7 +549,7 @@ String runInference() {
   
   // ENHANCED DEBUG: Capture input tensor state before inference
   int8_t input_samples[10];
-  logMessage(LOG_INFO, "🔍 PRE-INFERENCE INPUT TENSOR CHECK:");
+  logMessage(LOG_INFO, " PRE-INFERENCE INPUT TENSOR CHECK:");
   for (int i = 0; i < 10; i++) {
     input_samples[i] = ((int8_t*)input->data.int8)[i];
     logMessage(LOG_INFO, "  Pre-inference [" + String(i) + "]: " + String(input_samples[i]));
@@ -565,7 +565,7 @@ String runInference() {
     }
   }
   if (!pre_corruption) {
-    logMessage(LOG_INFO, "✅ Input tensor integrity verified before inference");
+    logMessage(LOG_INFO, " Input tensor integrity verified before inference");
   }
   
   // ADDITIONAL DEBUG: Check if input tensor is actually changing between frames
@@ -574,7 +574,7 @@ String runInference() {
   int changed_values = 0;
   
   if (!first_frame) {
-    logMessage(LOG_INFO, "🔄 INPUT TENSOR CHANGE ANALYSIS:");
+    logMessage(LOG_INFO, " INPUT TENSOR CHANGE ANALYSIS:");
     for (int i = 0; i < 10; i++) {
       if (input_samples[i] != prev_input_samples[i]) {
         changed_values++;
@@ -584,12 +584,12 @@ String runInference() {
     logMessage(LOG_INFO, "  Total changed values: " + String(changed_values) + "/10");
     
     if (changed_values == 0) {
-      logMessage(LOG_WARNING, "⚠️ WARNING: Input tensor is NOT changing between frames!");
+      logMessage(LOG_WARNING, " WARNING: Input tensor is NOT changing between frames!");
       logMessage(LOG_WARNING, "This indicates the preprocessing is not working correctly.");
     } else if (changed_values < 3) {
-      logMessage(LOG_WARNING, "⚠️ WARNING: Very few input values are changing (" + String(changed_values) + "/10)");
+      logMessage(LOG_WARNING, " WARNING: Very few input values are changing (" + String(changed_values) + "/10)");
     } else {
-      logMessage(LOG_INFO, "✅ Input tensor is changing normally between frames");
+      logMessage(LOG_INFO, " Input tensor is changing normally between frames");
     }
   }
   
@@ -603,7 +603,7 @@ String runInference() {
   checkTensorIntegrity("Before inference");
   
   // Run inference
-  logMessage(LOG_INFO, "🔄 Running inference with real camera image...");
+  logMessage(LOG_INFO, " Running inference with real camera image...");
   
   // DEBUG: Check interpreter state before inference
   logMessage(LOG_INFO, "   Interpreter state check:");
@@ -628,12 +628,12 @@ String runInference() {
                              " bytes, Free PSRAM: " + String(free_psram) + " bytes");
                   
                   if (free_heap < 10000) { // Less than 10KB free heap
-                    logMessage(LOG_ERROR, "⚠️ WARNING: Very low heap memory after inference - possible stack overflow");
+                    logMessage(LOG_ERROR, " WARNING: Very low heap memory after inference - possible stack overflow");
                   }
   
                     // Note: Input tensor modification during inference is normal in TFLite Micro
                     // The model may use input tensor memory for intermediate calculations
-                    logMessage(LOG_INFO, "ℹ️ Input tensor modification during inference is normal in TFLite Micro");
+                    logMessage(LOG_INFO, " Input tensor modification during inference is normal in TFLite Micro");
                   
                   // Check tensor integrity after inference
                   checkTensorIntegrity("After inference");
@@ -665,7 +665,7 @@ String runInference() {
   int output_zp = output_tensor->params.zero_point;
   
   // DEBUG: Print output tensor info
-  logMessage(LOG_INFO, "🔍 OUTPUT TENSOR ANALYSIS:");
+  logMessage(LOG_INFO, "OUTPUT TENSOR ANALYSIS:");
   logMessage(LOG_INFO, "   Output tensor dimensions: [" + String(output_tensor->dims->data[0]) + "," + 
              String(output_tensor->dims->data[1]) + "," + String(output_tensor->dims->data[2]) + "," + 
              String(output_tensor->dims->data[3]) + "," + String(output_tensor->dims->data[4]) + "]");
@@ -680,7 +680,7 @@ String runInference() {
   int output_changed_values = 0;
   
   if (!first_output) {
-    logMessage(LOG_INFO, "🔄 MODEL OUTPUT CHANGE ANALYSIS:");
+    logMessage(LOG_INFO, "MODEL OUTPUT CHANGE ANALYSIS:");
     for (int i = 0; i < 6; i++) {
       if (raw_output[i] != prev_output_samples[i]) {
         output_changed_values++;
@@ -690,12 +690,12 @@ String runInference() {
     logMessage(LOG_INFO, "  Total output changed values: " + String(output_changed_values) + "/6");
     
     if (output_changed_values == 0) {
-      logMessage(LOG_ERROR, "🚨 CRITICAL: Model output is NOT changing between frames!");
+      logMessage(LOG_ERROR, "CRITICAL: Model output is NOT changing between frames!");
       logMessage(LOG_ERROR, "This indicates the model is not responding to different inputs.");
     } else if (output_changed_values < 2) {
-      logMessage(LOG_WARNING, "⚠️ WARNING: Very few output values are changing (" + String(output_changed_values) + "/6)");
+      logMessage(LOG_WARNING, " WARNING: Very few output values are changing (" + String(output_changed_values) + "/6)");
     } else {
-      logMessage(LOG_INFO, "✅ Model output is changing normally between frames");
+      logMessage(LOG_INFO, " Model output is changing normally between frames");
     }
   }
   
@@ -800,7 +800,7 @@ String runInference() {
   // Apply NMS to remove overlapping detections
   nms(dets, det_count, nms_thresh);
   
-  logMessage(LOG_INFO, "📊 DETECTION RESULTS:");
+  logMessage(LOG_INFO, "DETECTION RESULTS:");
   logMessage(LOG_INFO, "   Detections found: " + String(det_count));
   logMessage(LOG_INFO, "   Total classes processed: " + String(num_classes));
 
@@ -857,18 +857,18 @@ String runInference() {
     Serial.println("   • Average confidence: " + String(calculateAverageConfidence(dets, det_count) * 100, 1) + "%");
     
   } else {
-    Serial.println("❌ NO PESTS DETECTED");
+    Serial.println(" NO PESTS DETECTED");
     Serial.println("   • Model confidence threshold: " + String(score_thresh * 100, 1) + "%");
     Serial.println("   • Try adjusting lighting or camera position");
   }
   
   Serial.println("------------------------------------------------------------");
-  Serial.println("⚡ PERFORMANCE METRICS:");
-  Serial.println("  ⏱️  Inference Time: " + String(inferenceTime) + " ms");
-  Serial.println("  📈 Average Time: " + String(perf.avgInferenceTime, 1) + " ms");
-  Serial.println("  🔢 Total Inferences: " + String(perf.totalInferences));
-  Serial.println("  💾 Free Heap: " + String(esp_get_free_heap_size() / 1024) + " KB");
-  Serial.println("  🧠 Free PSRAM: " + String(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB");
+  Serial.println("PERFORMANCE METRICS:");
+  Serial.println("  Inference Time: " + String(inferenceTime) + " ms");
+  Serial.println("  Average Time: " + String(perf.avgInferenceTime, 1) + " ms");
+  Serial.println("  Total Inferences: " + String(perf.totalInferences));
+  Serial.println("  Free Heap: " + String(esp_get_free_heap_size() / 1024) + " KB");
+  Serial.println("  Free PSRAM: " + String(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB");
   Serial.println("============================================================\n");
 
   // Build enhanced JSON with class names and bounding boxes
@@ -1257,12 +1257,12 @@ void setup() {
     logMessage(LOG_INFO, "Trying to allocate " + String(arena_size/1024) + " KB tensor arena...");
     tensor_arena = (uint8_t*) heap_caps_malloc(arena_size, MALLOC_CAP_SPIRAM);
     if (tensor_arena) {
-      logMessage(LOG_INFO, "✅ Tensor arena allocated successfully: " + String(arena_size/1024) + " KB");
+      logMessage(LOG_INFO, "Tensor arena allocated successfully: " + String(arena_size/1024) + " KB");
       arena_allocated = true;
       actual_arena_size = arena_size;
       break;
     } else {
-      logMessage(LOG_WARNING, "❌ Failed to allocate " + String(arena_size/1024) + " KB, trying next size...");
+      logMessage(LOG_WARNING, "Failed to allocate " + String(arena_size/1024) + " KB, trying next size...");
     }
   }
   
@@ -1324,11 +1324,11 @@ void setup() {
   logMessage(LOG_INFO, "  Arena usage: " + String((arena_used_bytes * 100) / actual_arena_size) + "%");
   
   if (arena_used_bytes > actual_arena_size * 0.9) {
-    logMessage(LOG_ERROR, "⚠️ WARNING: Tensor arena usage > 90% - risk of overflow!");
+    logMessage(LOG_ERROR, "WARNING: Tensor arena usage > 90% - risk of overflow!");
   }
   
   // Enhanced memory analysis
-  logMessage(LOG_INFO, "🔍 ENHANCED MEMORY ANALYSIS:");
+  logMessage(LOG_INFO, "ENHANCED MEMORY ANALYSIS:");
   size_t free_heap = ESP.getFreeHeap();
   size_t min_free_heap = ESP.getMinFreeHeap();
   size_t max_alloc_heap = ESP.getMaxAllocHeap();
@@ -1338,11 +1338,11 @@ void setup() {
   logMessage(LOG_INFO, "  Max alloc heap: " + String(max_alloc_heap) + " bytes");
   
   if (free_heap < 100000) {
-    logMessage(LOG_WARNING, "⚠️ Low heap memory - may cause issues");
+    logMessage(LOG_WARNING, "Low heap memory - may cause issues");
   }
   
   if (min_free_heap < 50000) {
-    logMessage(LOG_ERROR, "🚨 Very low minimum heap - high risk of corruption!");
+    logMessage(LOG_ERROR, "Very low minimum heap - high risk of corruption!");
   }
   logMessage(LOG_INFO, "   Arena allocated: " + String(actual_arena_size / 1024) + " KB");
   logMessage(LOG_INFO, "   Arena actually used: " + String(arena_used_bytes / 1024) + " KB");
@@ -1350,12 +1350,12 @@ void setup() {
   logMessage(LOG_INFO, "   Free arena space: " + String((actual_arena_size - arena_used_bytes) / 1024) + " KB");
   
   if (arena_used_bytes > actual_arena_size * 0.95f) {
-    logMessage(LOG_ERROR, "🚨 ARENA NEARLY FULL! This will cause memory corruption during inference!");
+    logMessage(LOG_ERROR, "ARENA NEARLY FULL! This will cause memory corruption during inference!");
     logMessage(LOG_ERROR, "Increase kTensorArenaSize to at least " + String((arena_used_bytes * 1.2f) / 1024) + " KB");
   } else if (arena_used_bytes > actual_arena_size * 0.85f) {
-    logMessage(LOG_WARNING, "⚠️  Arena usage high - may cause overflow with scratch operations");
+    logMessage(LOG_WARNING, "Arena usage high - may cause overflow with scratch operations");
   } else {
-    logMessage(LOG_INFO, "✅ Arena size appears adequate");
+    logMessage(LOG_INFO, "Arena size appears adequate");
   }
   
   size_t postAllocateDram = heap_caps_get_free_size(MALLOC_CAP_8BIT) - heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
@@ -1375,7 +1375,7 @@ void setup() {
   checkTensorIntegrity("After tensor allocation");
   
   // DEBUG: Check model quantization parameters for full INT8
-  logMessage(LOG_INFO, "🔍 FULL INT8 MODEL QUANTIZATION PARAMETERS:");
+  logMessage(LOG_INFO, "FULL INT8 MODEL QUANTIZATION PARAMETERS:");
   logMessage(LOG_INFO, "   Input scale: " + String(input->params.scale, 6));
   logMessage(LOG_INFO, "   Input zero point: " + String(input->params.zero_point));
   logMessage(LOG_INFO, "   Output tensor scale: " + String(output_tensor->params.scale, 6));
@@ -1385,7 +1385,7 @@ void setup() {
   
   // Validate full INT8 quantization
   if (input->params.scale == 0.0f || output_tensor->params.scale == 0.0f) {
-    logMessage(LOG_ERROR, "🚨 CRITICAL: Model quantization parameters are zero!");
+    logMessage(LOG_ERROR, "CRITICAL: Model quantization parameters are zero!");
     logMessage(LOG_ERROR, "This indicates the model is not properly quantized for TFLite Micro");
     return;
   }
@@ -1474,10 +1474,10 @@ void loop() {
     
     if (frame_counter > 0) {
       if (jpeg_hash == last_jpeg_hash) {
-        logMessage(LOG_WARNING, "⚠️ Camera may be stuck - JPEG hash identical: " + String(jpeg_hash));
+        logMessage(LOG_WARNING, "Camera may be stuck - JPEG hash identical: " + String(jpeg_hash));
         
         // ADDITIONAL DEBUG: Show JPEG data analysis
-        logMessage(LOG_INFO, "🔍 JPEG Data Analysis:");
+        logMessage(LOG_INFO, "JPEG Data Analysis:");
         logMessage(LOG_INFO, "   Frame length: " + String(test_fb->len) + " bytes");
         logMessage(LOG_INFO, "   First 10 bytes: [" + String(test_fb->buf[0]) + "," + String(test_fb->buf[1]) + 
                    "," + String(test_fb->buf[2]) + "," + String(test_fb->buf[3]) + "," + String(test_fb->buf[4]) + 
@@ -1496,10 +1496,10 @@ void loop() {
         logMessage(LOG_INFO, "   JPEG byte changes: " + String(jpeg_changes) + "/10");
         
         if (jpeg_changes == 0) {
-          logMessage(LOG_ERROR, "🚨 CRITICAL: JPEG data is completely static - camera sensor may be malfunctioning!");
+          logMessage(LOG_ERROR, "CRITICAL: JPEG data is completely static - camera sensor may be malfunctioning!");
         }
       } else {
-        logMessage(LOG_INFO, "✅ Camera working - JPEG hash changed: " + String(last_jpeg_hash) + " -> " + String(jpeg_hash));
+        logMessage(LOG_INFO, "Camera working - JPEG hash changed: " + String(last_jpeg_hash) + " -> " + String(jpeg_hash));
       }
     }
     
@@ -1507,7 +1507,7 @@ void loop() {
     frame_counter++;
     esp_camera_fb_return(test_fb);
   } else {
-    logMessage(LOG_ERROR, "❌ Camera test frame capture failed");
+    logMessage(LOG_ERROR, "Camera test frame capture failed");
   }
   
   // Run inference and print predictions to Serial
@@ -1515,7 +1515,7 @@ void loop() {
   
   // ADDITIONAL TEST: Every 10th frame, test with a different input pattern
   if (frame_counter % 10 == 0) {
-    logMessage(LOG_INFO, "🧪 TESTING MODEL RESPONSIVENESS - Frame #" + String(frame_counter));
+    logMessage(LOG_INFO, "TESTING MODEL RESPONSIVENESS - Frame #" + String(frame_counter));
     
     // Create a test pattern that's clearly different
     int8_t* test_input = (int8_t*)input->data.int8;
@@ -1527,17 +1527,17 @@ void loop() {
     TfLiteStatus test_status = interpreter->Invoke();
     if (test_status == kTfLiteOk) {
       int8_t* test_output = output_tensor->data.int8;
-      logMessage(LOG_INFO, "🧪 Test inference successful - Output samples: [" + 
+      logMessage(LOG_INFO, "Test inference successful - Output samples: [" + 
                  String(test_output[0]) + "," + String(test_output[1]) + "," + String(test_output[2]) + "]");
       
       // Check if output is different from normal camera input by comparing with global prev_output_samples
       if (test_output[0] != prev_output_samples[0] || test_output[1] != prev_output_samples[1]) {
-        logMessage(LOG_INFO, "✅ Model is responsive to different inputs");
+        logMessage(LOG_INFO, "Model is responsive to different inputs");
       } else {
-        logMessage(LOG_WARNING, "⚠️ Model output unchanged with test pattern - possible issue");
+        logMessage(LOG_WARNING, "Model output unchanged with test pattern - possible issue");
       }
     } else {
-      logMessage(LOG_ERROR, "❌ Test inference failed with status: " + String(test_status));
+      logMessage(LOG_ERROR, "Test inference failed with status: " + String(test_status));
     }
   }
   
