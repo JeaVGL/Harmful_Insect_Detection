@@ -309,9 +309,9 @@ def decode_predictions(pred, conf_thresh=0.25, iou_thresh=0.45, max_dets=100):
 # Train - FIXED VERSION
 # --------------------
 def main():
-    print("🚀 Starting FIXED MDET Training Script")
+    print(" Starting FIXED MDET Training Script")
     print("=" * 50)
-    print(f"🔧 Configuration:")
+    print(f" Configuration:")
     print(f"  • ALPHA: {ALPHA} (was 0.35 - now proper MobileNetV2)")
     print(f"  • FREEZE_BACKBONE: {FREEZE_BACKBONE} (was True - now allows training)")
     print(f"  • Model architecture: Proper YOLO head (was tiny head)")
@@ -322,8 +322,8 @@ def main():
     assert len(items) > 0, "No (image, annotation) pairs found."
     classes, name2id = build_class_map([ap for _, ap in items])
     num_classes = len(classes)
-    print(f"📊 Dataset: {len(items)} items, {num_classes} classes")
-    print(f"📋 Classes: {classes}")
+    print(f" Dataset: {len(items)} items, {num_classes} classes")
+    print(f" Classes: {classes}")
 
     # Split
     random.seed(1337)
@@ -331,29 +331,29 @@ def main():
     n_train = int(0.8 * len(items))
     train_items = items[:n_train]
     val_items = items[n_train:]
-    print(f"📈 Training: {len(train_items)}, Validation: {len(val_items)}")
+    print(f" Training: {len(train_items)}, Validation: {len(val_items)}")
 
     # Model
-    print("\n🏗️  Building model...")
+    print("\n Building model...")
     model = build_model(num_classes)
-    print("\n📊 Model Summary:")
+    print("\n Model Summary:")
     model.summary()
     
     # Calculate expected model size
     total_params = model.count_params()
     model_size_mb = (total_params * 4) / (1024 * 1024)  # 4 bytes per float32
-    print(f"\n📏 Expected model size: {model_size_mb:.2f} MB")
-    print(f"📏 Expected parameters: {total_params:,}")
+    print(f"\n Expected model size: {model_size_mb:.2f} MB")
+    print(f" Expected parameters: {total_params:,}")
     
     if model_size_mb < 5.0:
-        print("⚠️  WARNING: Model size seems too small for MobileNetV2 + YOLO!")
+        print(" WARNING: Model size seems too small for MobileNetV2 + YOLO!")
     elif model_size_mb > 20.0:
-        print("⚠️  WARNING: Model size seems too large!")
+        print(" WARNING: Model size seems too large!")
     else:
-        print("✅ Model size looks reasonable!")
+        print(" Model size looks reasonable!")
 
     # Compile
-    print("\n🔧 Compiling model...")
+    print("\n Compiling model...")
     opt = keras.optimizers.Adam(1e-3)
     model.compile(optimizer=opt, loss=DetectorLoss(num_classes))
 
@@ -372,16 +372,16 @@ def main():
     ]
 
     # Train
-    print(f"\n🚀 Starting training for {EPOCHS} epochs...")
+    print(f"\n Starting training for {EPOCHS} epochs...")
     model.fit(train_gen, validation_data=val_gen, steps_per_epoch=steps_tr, validation_steps=steps_va,
               epochs=EPOCHS, callbacks=cbs)
 
     # Save final
     model.save("mdet_final_fixed.h5")
-    print("✅ Training completed! Models saved.")
+    print(" Training completed! Models saved.")
 
     # Quick sanity check on one batch + NMS
-    print("\n🧪 Testing model on validation sample...")
+    print("\n Testing model on validation sample...")
     imgs, tgts = next(val_gen)
     preds = model.predict(imgs[:1], verbose=0)[0]           # (S,S,A,1+4+C)
     boxes, cls_ids, scores = decode_predictions(preds)
@@ -390,11 +390,11 @@ def main():
     print("Sample scores:", scores.numpy()[:10])
 
     # TFLite (float) export
-    print("\n💾 Exporting to TFLite...")
+    print("\n Exporting to TFLite...")
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     tflite_model = converter.convert()
     open("mdet_float_fixed.tflite", "wb").write(tflite_model)
-    print("✅ Saved mdet_float_fixed.tflite")
+    print(" Saved mdet_float_fixed.tflite")
 
 if __name__ == "__main__":
     main()
