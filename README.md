@@ -47,15 +47,15 @@ As of **August 2025**, **MobileNetV2‑based** models are the only approach that
 - Input resolution is **224×224 RGB**. ESP32‑S3 compute headroom may allow increases, but verify memory and latency.
 
 **Expected dataset structure:**
-DATASET_PATH/
-├── images/
-│   ├── image1.jpg
-│   ├── image2.jpg
-│   └── ...
-└── Annotations/
-├── image1.xml
-├── image2.xml
-└── ...
+DATASET_PATH/<br>
+├── images/<br>
+│   ├── image1.jpg<br>
+│   ├── image2.jpg<br>
+│   └── ...<br>
+└── Annotations/<br>
+├── image1.xml<br>
+├── image2.xml<br>
+└── ...<br>
 
 Each `.xml` must include:
 - `<object>` with `<name>` and `<bndbox>`: `xmin`, `ymin`, `xmax`, `ymax`  
@@ -111,13 +111,13 @@ This utility runs the **quantized TFLite** model on local PNG images and saves a
 - Uses the built‑in **24‑class** label list and generates colored overlays.
 
 **Folder & file expectations**
-project_root/
-├── mdet_int8_final.tflite
-├── test_inference.py
-└── test_img_inference/
-├── img_001.png
-├── img_002.png
-└── ...
+project_root/<br>
+├── mdet_int8_final.tflite<br>
+├── test_inference.py<br>
+└── test_img_inference/<br>
+├── img_001.png<br>
+├── img_002.png<br>
+└── ...<br>
 
 - Model path default: `mdet_int8_final.tflite` (same directory as the script).  
 - Test images must be **PNG** files in `test_img_inference/`.  
