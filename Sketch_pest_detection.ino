@@ -14,6 +14,7 @@
 #include "esp_camera.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"                 // pour heap_caps_malloc()
+#include "jpeg_decoder.h"  // ESP32 JPEG decoder library (ESP-IDF v5.x)
 
 // -------------------- Data Structures --------------------
 
@@ -78,6 +79,13 @@ void logMessage(LogLevel level, const String& message) {
 String runInference();
 float calculateAverageConfidence(const Detection* dets, int count);
 
+// Image processing function declarations
+bool decodeJPEGToRGB(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height);
+bool processRGB565(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height);
+bool processOtherFormats(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height);
+bool switchToRGB565IfNeeded();
+void debugSaveDecodedImage(uint8_t* rgb_buffer, int width, int height, const char* filename);
+
 // -------------------- Wi‑Fi Configuration --------------------
 // Using WiFiManager for secure credential management
 WiFiManager wifiManager;
@@ -97,7 +105,7 @@ camera_config_t camera_config = {
   .xclk_freq_hz = 20000000,   // Standard 20MHz
   .ledc_timer   = LEDC_TIMER_0,
   .ledc_channel = LEDC_CHANNEL_0,
-  .pixel_format = PIXFORMAT_JPEG,      // Use JPEG instead of RGB565 to reduce DMA load
+  .pixel_format = PIXFORMAT_JPEG,      // Use JPEG for smaller memory footprint
   .frame_size   = FRAMESIZE_QVGA,      // 320x240 - standard size with good DMA alignment
   .jpeg_quality = 15,                  // Higher number = lower quality = smaller file
   .fb_count     = 2,                   // Double buffer for stability
@@ -176,7 +184,226 @@ T simple_max(T a, T b) {
   return (a > b) ? a : b;
 }
 
-// Image preprocessing: Decode JPEG and convert to model input format (224x224 RGB)
+// -------------------- Image Processing Helper Functions --------------------
+
+// Decode JPEG to RGB using ESP32's built-in JPEG decoder (ESP-IDF v5.x API)
+bool decodeJPEGToRGB(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height) {
+  if (!fb || !fb->buf || !output_buffer) {
+    logMessage(LOG_ERROR, "Invalid parameters for JPEG decoding");
+    return false;
+  }
+  
+  // First, get image info to determine output buffer size
+  esp_jpeg_image_cfg_t info_cfg = {
+    .indata = fb->buf,
+    .indata_size = fb->len,
+    .outbuf = nullptr,
+    .outbuf_size = 0,
+    .out_format = JPEG_IMAGE_FORMAT_RGB565,
+    .out_scale = JPEG_IMAGE_SCALE_0
+  };
+  
+  esp_jpeg_image_output_t img_info;
+  esp_err_t ret = esp_jpeg_get_image_info(&info_cfg, &img_info);
+  if (ret != ESP_OK) {
+    logMessage(LOG_ERROR, "Failed to get JPEG image info: " + String(esp_err_to_name(ret)));
+    return false;
+  }
+  
+  // Allocate buffer for full-size decoded RGB565 image
+  size_t rgb565_size = img_info.width * img_info.height * 2; // RGB565 = 2 bytes per pixel
+  uint8_t* rgb565_buffer = (uint8_t*)heap_caps_malloc(rgb565_size, MALLOC_CAP_8BIT);
+  if (!rgb565_buffer) {
+    logMessage(LOG_ERROR, "Failed to allocate RGB565 buffer for JPEG decoding");
+    return false;
+  }
+  
+  // Configure JPEG decoder for RGB565 output
+  esp_jpeg_image_cfg_t decode_cfg = {
+    .indata = fb->buf,
+    .indata_size = fb->len,
+    .outbuf = rgb565_buffer,
+    .outbuf_size = rgb565_size,
+    .out_format = JPEG_IMAGE_FORMAT_RGB565,
+    .out_scale = JPEG_IMAGE_SCALE_0,
+    .flags = {0},
+    .advanced = {nullptr, 0} // Let library allocate working buffer
+  };
+  
+  // Decode JPEG to RGB565
+  ret = esp_jpeg_decode(&decode_cfg, &img_info);
+  if (ret != ESP_OK) {
+    logMessage(LOG_ERROR, "JPEG decode failed: " + String(esp_err_to_name(ret)));
+    free(rgb565_buffer);
+    return false;
+  }
+  
+  // Verify decoded dimensions
+  if (img_info.width != fb->width || img_info.height != fb->height) {
+    logMessage(LOG_WARNING, "JPEG decode size mismatch: expected " + String(fb->width) + "x" + String(fb->height) + 
+               ", got " + String(img_info.width) + "x" + String(img_info.height));
+  }
+  
+  // Convert RGB565 to RGB888 and resize to target dimensions
+  uint16_t* rgb565_data = (uint16_t*)rgb565_buffer;
+  for (int y = 0; y < target_height; y++) {
+    for (int x = 0; x < target_width; x++) {
+      // Map target coordinates to source coordinates
+      int src_x = (x * fb->width) / target_width;
+      int src_y = (y * fb->height) / target_height;
+      
+      // Ensure bounds
+      src_x = simple_min(src_x, (int)(fb->width - 1));
+      src_y = simple_min(src_y, (int)(fb->height - 1));
+      
+      // Get RGB565 pixel
+      uint16_t rgb565 = rgb565_data[src_y * fb->width + src_x];
+      
+      // Convert RGB565 to RGB888
+      uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;  // 5 bits -> 8 bits
+      uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;   // 6 bits -> 8 bits  
+      uint8_t b = (rgb565 & 0x1F) << 3;          // 5 bits -> 8 bits
+      
+      // Store in output buffer (HWC format)
+      int pixel_idx = (y * target_width + x) * 3;
+      output_buffer[pixel_idx + 0] = r;
+      output_buffer[pixel_idx + 1] = g;
+      output_buffer[pixel_idx + 2] = b;
+    }
+  }
+  
+  // Clean up
+  free(rgb565_buffer);
+  
+  logMessage(LOG_INFO, "JPEG decoded successfully: " + String(fb->width) + "x" + String(fb->height) + 
+             " -> " + String(target_width) + "x" + String(target_height) + " RGB");
+  
+  // Debug: Log first few pixels to verify decoding
+  debugSaveDecodedImage(output_buffer, target_width, target_height, "decoded_jpeg");
+  
+  return true;
+}
+
+// Process RGB565 format directly
+bool processRGB565(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height) {
+  if (!fb || !fb->buf || !output_buffer) {
+    logMessage(LOG_ERROR, "Invalid parameters for RGB565 processing");
+    return false;
+  }
+  
+  uint16_t* rgb565_data = (uint16_t*)fb->buf;
+  
+  // Convert RGB565 to RGB888 and resize to target dimensions
+  for (int y = 0; y < target_height; y++) {
+    for (int x = 0; x < target_width; x++) {
+      // Map target coordinates to source coordinates
+      int src_x = (x * fb->width) / target_width;
+      int src_y = (y * fb->height) / target_height;
+      
+      // Ensure bounds
+      src_x = simple_min(src_x, (int)(fb->width - 1));
+      src_y = simple_min(src_y, (int)(fb->height - 1));
+      
+      // Get RGB565 pixel
+      uint16_t rgb565 = rgb565_data[src_y * fb->width + src_x];
+      
+      // Convert RGB565 to RGB888
+      uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;  // 5 bits -> 8 bits
+      uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;   // 6 bits -> 8 bits  
+      uint8_t b = (rgb565 & 0x1F) << 3;          // 5 bits -> 8 bits
+      
+      // Store in output buffer (HWC format)
+      int pixel_idx = (y * target_width + x) * 3;
+      output_buffer[pixel_idx + 0] = r;
+      output_buffer[pixel_idx + 1] = g;
+      output_buffer[pixel_idx + 2] = b;
+    }
+  }
+  
+  logMessage(LOG_INFO, "RGB565 processed successfully: " + String(fb->width) + "x" + String(fb->height) + 
+             " -> " + String(target_width) + "x" + String(target_height) + " RGB");
+  
+  return true;
+}
+
+// Process other formats (fallback)
+bool processOtherFormats(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height) {
+  if (!fb || !fb->buf || !output_buffer) {
+    logMessage(LOG_ERROR, "Invalid parameters for other format processing");
+    return false;
+  }
+  
+  logMessage(LOG_WARNING, "Processing unsupported format: " + String(fb->format) + 
+             " - using grayscale conversion");
+  
+  // Convert to grayscale and resize to target dimensions
+  for (int y = 0; y < target_height; y++) {
+    for (int x = 0; x < target_width; x++) {
+      // Map target coordinates to source coordinates
+      int src_x = (x * fb->width) / target_width;
+      int src_y = (y * fb->height) / target_height;
+      
+      // Ensure bounds
+      src_x = simple_min(src_x, (int)(fb->width - 1));
+      src_y = simple_min(src_y, (int)(fb->height - 1));
+      
+      // Get source pixel value
+      uint8_t pixel_value = fb->buf[src_y * fb->width + src_x];
+      
+      // Convert to RGB (grayscale)
+      int pixel_idx = (y * target_width + x) * 3;
+      output_buffer[pixel_idx + 0] = pixel_value;  // R
+      output_buffer[pixel_idx + 1] = pixel_value;  // G
+      output_buffer[pixel_idx + 2] = pixel_value;  // B
+    }
+  }
+  
+  logMessage(LOG_INFO, "Other format processed as grayscale: " + String(fb->width) + "x" + String(fb->height) + 
+             " -> " + String(target_width) + "x" + String(target_height) + " RGB");
+  
+  return true;
+}
+
+// Dynamic camera format switching based on available memory
+bool switchToRGB565IfNeeded() {
+  size_t freeHeap = esp_get_free_heap_size();
+  size_t freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  
+  // If we have enough memory, switch to RGB565 for better quality
+  if (freeHeap > 100000 && freePsram > 200000) {  // 100KB heap + 200KB PSRAM
+    logMessage(LOG_INFO, "Switching to RGB565 format for better image quality");
+    
+    // Stop camera
+    esp_camera_deinit();
+    
+    // Modify camera config
+    camera_config_t rgb_config = camera_config;
+    rgb_config.pixel_format = PIXFORMAT_RGB565;
+    rgb_config.fb_count = 1;  // Reduce buffer count for RGB565
+    
+    // Reinitialize camera
+    esp_err_t err = esp_camera_init(&rgb_config);
+    if (err != ESP_OK) {
+      logMessage(LOG_ERROR, "Failed to switch to RGB565: " + String(esp_err_to_name(err)));
+      
+      // Fallback to JPEG
+      esp_camera_deinit();
+      err = esp_camera_init(&camera_config);
+      if (err != ESP_OK) {
+        logMessage(LOG_ERROR, "Failed to restore JPEG format: " + String(esp_err_to_name(err)));
+        return false;
+      }
+      return false;
+    }
+    
+    logMessage(LOG_INFO, "Successfully switched to RGB565 format");
+    return true;
+  }
+  
+  return false;
+}
+
+// Image preprocessing: Properly decode JPEG and convert to model input format (224x224 RGB)
 bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
   if (!fb || !fb->buf || !input_buffer) {
     logMessage(LOG_ERROR, "Invalid frame or input buffer");
@@ -188,169 +415,45 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
   const int MODEL_HEIGHT = 224;
   const int MODEL_CHANNELS = 3;
   
-  // MDET v2 preprocessing: Simple 0-1 normalization
-  // No mean subtraction or complex normalization needed
-  
-  // Get input tensor quantization parameters for full INT8 model
+  // Get input tensor parameters for quantization
   float input_scale = input->params.scale;
   int input_zp = input->params.zero_point;
   
-  // For full INT8 models, we need to ensure proper quantization
   if (input_scale == 0.0f) {
     logMessage(LOG_ERROR, "Input scale is zero - model may not be properly quantized");
     return false;
   }
   
-  logMessage(LOG_INFO, " Processing real camera image");
+  logMessage(LOG_INFO, "Processing real camera image: " + String(fb->width) + "x" + String(fb->height) + 
+             ", format: " + String(fb->format) + ", length: " + String(fb->len) + " bytes");
   
-  // Create temporary HWC buffer first
+  // Create temporary HWC buffer for the model input size
   uint8_t* temp_hwc_buffer = (uint8_t*)malloc(MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS);
   if (!temp_hwc_buffer) {
     logMessage(LOG_ERROR, "Failed to allocate temporary HWC buffer");
     return false;
   }
   
-  // Process real camera image
-  logMessage(LOG_INFO, "Processing real camera image");
+  bool success = false;
   
-  // Decode JPEG to RGB using ESP32's built-in JPEG decoder
-  uint8_t* rgb_buffer = (uint8_t*)malloc(fb->width * fb->height * 3);
-  if (!rgb_buffer) {
-    logMessage(LOG_ERROR, "Failed to allocate RGB buffer");
+  if (fb->format == PIXFORMAT_JPEG) {
+    // Proper JPEG decoding using ESP32's built-in decoder
+    success = decodeJPEGToRGB(fb, temp_hwc_buffer, MODEL_WIDTH, MODEL_HEIGHT);
+  } else if (fb->format == PIXFORMAT_RGB565) {
+    // Direct RGB565 processing
+    success = processRGB565(fb, temp_hwc_buffer, MODEL_WIDTH, MODEL_HEIGHT);
+  } else {
+    // Fallback for other formats
+    success = processOtherFormats(fb, temp_hwc_buffer, MODEL_WIDTH, MODEL_HEIGHT);
+  }
+  
+  if (!success) {
+    logMessage(LOG_ERROR, "Failed to process image format");
     free(temp_hwc_buffer);
     return false;
   }
   
-  // For JPEG frames, we need to decode them properly
-  // Since ESP32 camera library doesn't provide direct JPEG->RGB conversion,
-  // we'll use a more sophisticated approach that actually processes the JPEG data
-  
-  if (fb->format == PIXFORMAT_JPEG) {
-    // CRITICAL FIX: Process JPEG data to create truly different input tensors
-    // The previous approach was too deterministic and created identical patterns
-    
-    // Use a frame counter to ensure variation
-    static uint32_t frame_counter = 0;
-    frame_counter++;
-    
-    // Create a seed based on the actual JPEG data content
-    uint32_t jpeg_seed = 0;
-    for (int i = 0; i < simple_min(100, (int)fb->len); i++) {
-      jpeg_seed = ((jpeg_seed << 5) + jpeg_seed) + fb->buf[i];
-    }
-    
-    // Use the JPEG seed to create a pseudo-random number generator
-    uint32_t rand_state = jpeg_seed + frame_counter;
-    
-    // Simple but effective random number generator
-    auto simple_rand = [&rand_state]() -> uint32_t {
-      rand_state = rand_state * 1103515245 + 12345;
-      return rand_state;
-    };
-    
-    for (int y = 0; y < MODEL_HEIGHT; y++) {
-      for (int x = 0; x < MODEL_WIDTH; x++) {
-        int pixel_idx = (y * MODEL_WIDTH + x) * 3;
-        
-        // Map model coordinates to camera coordinates
-        int cam_x = (x * fb->width) / MODEL_WIDTH;
-        int cam_y = (y * fb->height) / MODEL_HEIGHT;
-        
-        // Ensure coordinates are within bounds
-        cam_x = simple_min(cam_x, (int)(fb->width - 1));
-        cam_y = simple_min(cam_y, (int)(fb->height - 1));
-        
-        // Sample multiple JPEG bytes from different locations to create variation
-        int jpeg_idx1 = (cam_y * fb->width + cam_x) % fb->len;
-        int jpeg_idx2 = ((cam_y + 5) * fb->width + (cam_x + 7)) % fb->len;
-        int jpeg_idx3 = ((cam_y * 3 + 11) * fb->width + (cam_x * 2 + 13)) % fb->len;
-        
-        // Extract actual JPEG bytes
-        uint8_t jpeg_byte1 = fb->buf[jpeg_idx1];
-        uint8_t jpeg_byte2 = fb->buf[jpeg_idx2];
-        uint8_t jpeg_byte3 = fb->buf[jpeg_idx3];
-        
-        // Create RGB values that vary based on:
-        // 1. Actual JPEG content (jpeg_byte values)
-        // 2. Position (cam_x, cam_y)
-        // 3. Frame counter (ensures temporal variation)
-        // 4. Random variation (based on JPEG content)
-        
-        uint8_t r = (jpeg_byte1 + cam_x + (jpeg_byte2 % 128) + (frame_counter % 64)) % 256;
-        uint8_t g = (jpeg_byte2 + cam_y + (jpeg_byte3 % 128) + ((frame_counter + 1) % 64)) % 256;
-        uint8_t b = (jpeg_byte3 + (cam_x + cam_y) / 2 + (jpeg_byte1 % 128) + ((frame_counter + 2) % 64)) % 256;
-        
-        // Add controlled randomness based on JPEG content
-        uint32_t rand_val = simple_rand();
-        r = (r + (rand_val % 32)) % 256;
-        g = (g + ((rand_val >> 8) % 32)) % 256;
-        b = (b + ((rand_val >> 16) % 32)) % 256;
-        
-        // Ensure we don't have too many extreme values
-        r = simple_max(10, simple_min(245, (int)r));
-        g = simple_max(10, simple_min(245, (int)g));
-        b = simple_max(10, simple_min(245, (int)b));
-        
-        temp_hwc_buffer[pixel_idx + 0] = r;
-        temp_hwc_buffer[pixel_idx + 1] = g;
-        temp_hwc_buffer[pixel_idx + 2] = b;
-      }
-    }
-    
-    // Log the variation we're creating
-    logMessage(LOG_INFO, "🔧 JPEG Processing: Frame #" + String(frame_counter) + 
-               ", Seed: " + String(jpeg_seed) + ", Len: " + String(fb->len));
-    
-    // FALLBACK: If JPEG data is too similar between frames, force variation
-    static uint32_t last_jpeg_seed = 0;
-    if (abs((int)(jpeg_seed - last_jpeg_seed)) < 1000) {
-      logMessage(LOG_WARNING, " JPEG data too similar, forcing input variation");
-      
-      // Force variation by adding frame-specific patterns
-      for (int i = 0; i < 1000; i += 10) {
-        input_buffer[i] = (input_buffer[i] + frame_counter + (i % 64)) % 256 - 128;
-      }
-    }
-    last_jpeg_seed = jpeg_seed;
-  } else {
-    // For non-JPEG formats, use the data directly
-    for (int y = 0; y < MODEL_HEIGHT; y++) {
-      for (int x = 0; x < MODEL_WIDTH; x++) {
-        int pixel_idx = (y * MODEL_WIDTH + x) * 3;
-        
-        // Map model coordinates to camera coordinates
-        int cam_x = (x * fb->width) / MODEL_WIDTH;
-        int cam_y = (y * fb->height) / MODEL_HEIGHT;
-        
-        // Ensure coordinates are within bounds
-        cam_x = simple_min(cam_x, (int)(fb->width - 1));
-        cam_y = simple_min(cam_y, (int)(fb->height - 1));
-        
-        int cam_idx = cam_y * fb->width + cam_x;
-        
-        if (fb->format == PIXFORMAT_RGB565) {
-          // RGB565 format: RRRRRGGGGGGBBBBB
-          uint16_t rgb565 = ((uint16_t*)fb->buf)[cam_idx];
-          uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;  // 5 bits -> 8 bits
-          uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;   // 6 bits -> 8 bits  
-          uint8_t b = (rgb565 & 0x1F) << 3;          // 5 bits -> 8 bits
-          
-          temp_hwc_buffer[pixel_idx + 0] = r;
-          temp_hwc_buffer[pixel_idx + 1] = g;
-          temp_hwc_buffer[pixel_idx + 2] = b;
-        } else {
-          // For other formats, use the raw byte value
-          temp_hwc_buffer[pixel_idx + 0] = fb->buf[cam_idx];
-          temp_hwc_buffer[pixel_idx + 1] = fb->buf[cam_idx];
-          temp_hwc_buffer[pixel_idx + 2] = fb->buf[cam_idx];
-        }
-      }
-    }
-  }
-  
-  free(rgb_buffer);
-  
-  // Convert HWC to CHW format and apply simple 0-1 normalization + quantization
+  // Convert HWC to CHW format and apply normalization + quantization
   for (int c = 0; c < MODEL_CHANNELS; c++) {
     for (int h = 0; h < MODEL_HEIGHT; h++) {
       for (int w = 0; w < MODEL_WIDTH; w++) {
@@ -378,42 +481,12 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
   free(temp_hwc_buffer);
   
   // Debug: Sample input values
-  logMessage(LOG_INFO, " INPUT VALIDATION:");
-  logMessage(LOG_INFO, "   Sample input values: [" + String((int)input_buffer[0]) + "," + 
+  logMessage(LOG_INFO, "INPUT VALIDATION:");
+  logMessage(LOG_INFO, "  Sample input values: [" + String((int)input_buffer[0]) + "," + 
              String((int)input_buffer[100]) + "," + String((int)input_buffer[500]) + "]");
-  logMessage(LOG_INFO, "   Input range check: Expected INT8 (-128 to 127), Scale=" + String(input_scale, 6) + ", ZP=" + String(input_zp));
+  logMessage(LOG_INFO, "  Input range check: Expected INT8 (-128 to 127), Scale=" + String(input_scale, 6) + ", ZP=" + String(input_zp));
   
-  // ADDITIONAL DEBUG: Check if preprocessing is actually creating variation
-  static int8_t prev_debug_values[3] = {0};
-  static bool first_preprocess = true;
-  
-  if (!first_preprocess) {
-    int changed_count = 0;
-    for (int i = 0; i < 3; i++) {
-      int idx = (i == 0) ? 0 : ((i == 1) ? 100 : 500);
-      if (input_buffer[idx] != prev_debug_values[i]) {
-        changed_count++;
-        logMessage(LOG_INFO, "   Input changed [" + String(i) + "]: " + String(prev_debug_values[i]) + " -> " + String(input_buffer[idx]));
-      }
-    }
-    logMessage(LOG_INFO, "   Preprocessing variation: " + String(changed_count) + "/3 values changed");
-    
-    if (changed_count == 0) {
-      logMessage(LOG_ERROR, " CRITICAL: Preprocessing is NOT creating variation!");
-    } else if (changed_count < 2) {
-      logMessage(LOG_WARNING, " WARNING: Very little preprocessing variation (" + String(changed_count) + "/3)");
-    } else {
-      logMessage(LOG_INFO, " Preprocessing is creating good variation");
-    }
-  }
-  
-  // Store current values for next comparison
-  prev_debug_values[0] = input_buffer[0];
-  prev_debug_values[1] = input_buffer[100];
-  prev_debug_values[2] = input_buffer[500];
-  first_preprocess = false;
-  
-  // DEBUG: Check input value distribution
+  // Check input value distribution
   int8_t min_val = 127, max_val = -128;
   int zero_count = 0;
   for (int i = 0; i < 1000; i++) { // Check first 1000 values
@@ -422,10 +495,24 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
     if (val > max_val) max_val = val;
     if (val == 0) zero_count++;
   }
-  logMessage(LOG_INFO, "   Input value range (first 1000): [" + String(min_val) + ", " + String(max_val) + "]");
-  logMessage(LOG_INFO, "   Zero values: " + String(zero_count) + "/1000 (" + String((float)zero_count/10.0f, 1) + "%)");
+  logMessage(LOG_INFO, "  Input value range (first 1000): [" + String(min_val) + ", " + String(max_val) + "]");
+  logMessage(LOG_INFO, "  Zero values: " + String(zero_count) + "/1000 (" + String((float)zero_count/10.0f, 1) + "%)");
   
   return true;
+}
+
+// Debug function to save decoded image data (for testing)
+void debugSaveDecodedImage(uint8_t* rgb_buffer, int width, int height, const char* filename) {
+  // This is a debug function that could be used to save images to SD card
+  // For now, just log the first few pixel values
+  logMessage(LOG_INFO, "DEBUG: First 9 pixels of decoded image:");
+  for (int y = 0; y < 3; y++) {
+    for (int x = 0; x < 3; x++) {
+      int idx = (y * width + x) * 3;
+      logMessage(LOG_INFO, "  Pixel(" + String(x) + "," + String(y) + "): R=" + String(rgb_buffer[idx]) + 
+                 " G=" + String(rgb_buffer[idx+1]) + " B=" + String(rgb_buffer[idx+2]));
+    }
+  }
 }
 
 // DEBUG: Save the processed input image as PPM format for verification
@@ -1289,6 +1376,10 @@ void setup() {
     return;
   }
   logMessage(LOG_INFO, "Camera initialized successfully");
+  
+  // Try to switch to RGB565 format if we have enough memory
+  // DISABLED: Causes DMA overflow and crashes
+  // switchToRGB565IfNeeded();
   
   // Memory state after successful camera init
   freeDram = heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
