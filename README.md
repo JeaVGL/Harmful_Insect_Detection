@@ -1,51 +1,58 @@
-# Harmful_Insect_Detection
+Harmful_Insect_Detection
+This repository contains everything needed to train, convert, test, and deploy a lightweight multi-object detection model for real-time insect detection on an ESP32-S3 microcontroller.
 
-This repository contains everything needed to train, convert, and deploy a **lightweight multi-object detection model** for **real-time insect detection** on an **ESP32-S3** microcontroller.
+The system targets low-power agricultural monitoring: detect multiple insect species in a single camera frame, entirely on-device—no cloud inference required.
 
-The system is designed for **low-power agricultural monitoring**: detecting multiple insect species in a single camera frame, entirely **on-device**, without cloud inference.
+Features
+Lightweight model based on MobileNetV2 + YOLO-style head
 
----
+Detects multiple insects per frame (24 species in the dataset)
 
-##  Features
+Fully on-device inference on ESP32-S3
 
-- **Lightweight model** based on MobileNetV2 + YOLO-style head
-- Detects **multiple insects per frame** (24 species in dataset)
-- Fully **on-device inference** on ESP32-S3
-- **TFLite INT8 quantization** for small size & speed
-- Ready-to-use **Arduino sketch** for real-time camera detection
-- Companion **user app** for visualization and control
+TFLite INT8 quantization for small size & speed
 
----
+Ready-to-use Arduino sketch (ESP32-S3 + OV2640) for live camera detection
 
-##  Requirements
+User app (companion) for visualization and control
 
-### For training & conversion
-- Python 3.10+
-- TensorFlow 2.x (with GPU support recommended)
-- OpenCV, NumPy, Matplotlib
-- Pascal VOC-style dataset (XML annotations)
+Requirements
+For training & conversion
+Python 3.10+
 
-// The requirements.txt file describes what environment was used (not all packages featured might be useful for the training / export).
+TensorFlow 2.x (GPU support recommended)
 
+OpenCV, NumPy, Matplotlib
 
-### For deployment
-- Arduino IDE with **ESP32-S3 board support** (the ESP core by ESPRESSIF is required).
-- ESP32-S3 board (tested on ESP32-S3-EYE, ESP32-S3-WROOM)
-- OV2640 camera module
+Pascal VOC–style dataset (XML annotations)
 
+The requirements.txt describes the environment used (some packages may not be strictly necessary for training/export).
 
-## Detailed explanations for each file
+For deployment
+Arduino IDE with ESP32-S3 board support (Espressif core)
 
-### Detailed explanations for each files 
+ESP32-S3 board (tested on ESP32-S3-EYE, ESP32-S3-WROOM)
 
-#### Model training  
-As of August 2025, MonbilenetV2 based models seem to be the only option for this projects, as all the alternative we tried failed. ( YOLO nano models were too big to fit the ESP32 memory requirements and Nanodet models were too complex for the TFLite Micro Arduino library to handle - only zero outputs). 
+OV2640 camera module
 
-The training script expects a Pascal VOC XML format dataset, such as a Pest24 dataset, available on Kaggle. To use any other format, such as YOLO, the script needs to be adapted. However, since the script is encoding the data to a YOLO like format, you could modify the training script for YOLO datasets pretty easily.  
-The script uses a directory split into training/validation/test sets, managed by the get_dataloaders function from dataloader_patch.py, meaning you don't have to split the data between train and val.
-The biggest falw of the Pest24 dataset is the class imbalance, as some classes feature more then 5000 pests while some others only feature 100+ pests. This imbalance is adressed in the training by balancing long-tail classes via per-class counts → class weights → weighted sampling in a custom generator.
-As input, we use 224x224 RGB images. It might be possible to increase the image size as the computationnal power of ESP32 seems able to process it. 
-Here is the dataset expected stucture:
+Detailed explanations for each file
+Model training
+As of August 2025, MobileNetV2-based models are the only approach that consistently fits ESP32 constraints and runs reliably end-to-end in TFLite Micro. (YOLO-nano variants exceeded memory; NanoDet variants produced zero outputs under TFLite Micro on Arduino.)
+
+The training script expects a Pascal VOC XML dataset (e.g., Pest24 from Kaggle).
+
+To use another format (e.g., YOLO), adapt the loader. Since the script encodes labels into a YOLO-like format internally, adapting for YOLO datasets is straightforward.
+
+Data split into train/val/test is handled by get_dataloaders in dataloader_patch.py—you don’t need a manual split.
+
+Class imbalance (notably in Pest24) is mitigated via per-class counts → class weights → weighted sampling in a custom generator.
+
+Input resolution is 224×224 RGB. ESP32-S3 compute headroom may allow increases, but verify memory and latency.
+
+Expected dataset structure:
+
+Copier
+Modifier
 DATASET_PATH/
 ├── images/
 │   ├── image1.jpg
@@ -55,82 +62,168 @@ DATASET_PATH/
     ├── image1.xml
     ├── image2.xml
     └── ...
-Each .xml must have:
+Each .xml must include:
 
-<object> with <name> and <bndbox> (xmin, ymin, xmax, ymax)
+<object> with <name> and <bndbox>: xmin, ymin, xmax, ymax
 
-<size> with width and height
+<size> with width, height
 
-All object classes will be collected automatically to build the label map.
+All classes are collected automatically to build the label map.
 
-The table below explains each of the Key Configuration parameters:
-| Parameter         | Default | Meaning |
-|-------------------|---------|---------|
-| `IMG_SIZE`        | 224     | Input image size (square) |
-| `ALPHA`           | 1.0     | MobileNetV2 width multiplier (smaller = lighter model) |
-| `FREEZE_BACKBONE` | False   | Whether to freeze MobileNetV2 weights |
-| `BATCH_SIZE`      | 16      | Training batch size |
-| `EPOCHS`          | 60      | Maximum number of training epochs |
-| `A`               | 3       | Anchors per grid cell |
-| `ANCHORS`         | `[[0.10, 0.08], [0.18, 0.15], [0.28, 0.24]]` | Anchor box sizes relative to input dimensions |
+Key configuration parameters
+
+Parameter	Default	Meaning
+IMG_SIZE	224	Input image size (square)
+ALPHA	1.0	MobileNetV2 width multiplier (smaller = lighter model)
+FREEZE_BACKBONE	False	Whether to freeze MobileNetV2 weights
+BATCH_SIZE	16	Training batch size
+EPOCHS	60	Maximum number of training epochs
+A	3	Anchors per grid cell
+ANCHORS	[[0.10, 0.08], [0.18, 0.15], [0.28, 0.24]]	Anchor sizes relative to input dims
 
 TO USE THE TRAINING SCRIPT:
-You only have to modify the Dataset path and make sure it has the right format. 
+Update the dataset path and ensure it matches the structure above. Then run the training entry point as documented in the script.
 
-#### Model export and quantization 
+Model export and quantization
+The export/quantization script converts the trained .h5 model to a .tflite model and generates a C header.
 
-The model export and quantization script exports the .h5 model resulting from the training to a .tflite model and a C header. 
+Quantization calibration uses ~100 camera-like images (224×224×3).
 
-The quantization dataset dalibration is done by generatic 100 camera like images (224x224x3).
+Quantization is full INT8 (inputs, weights, outputs) to minimize model size.
 
-The quantization is a full int8 quantization (input, weights and output) to minimize the resulting model size as much as possible. 
+The script validates the converted model by checking input/output tensor types & shapes, runs a random INT8 inference, and compares float vs quantized outputs.
 
-The script also test the resulting model by checking the input/output tesnor types and shapes, running a random INT8 inference and comparing the originala and quantized outputs to check quality. 
+Model characteristics are dumped to a JSON file.
 
-The characteristics of the model are shown in a json file. 
+C header generation (single header):
 
-NOTE: The C header generation generates both .h + .c C array version.
-However, for Arduino you generally only want a single .h file. This can be achieved by using the following command in the terminal:
-xxd -i <tflite_model.tflite> > <output__C_header>.h 
-!! Replace <tflite_model.tflite> by the .tflite model generated by the training script (default is mdet_int8_final.tflite) and <output__C_header> by the name you want the C header to have. 
+bash
+Copier
+Modifier
+xxd -i <tflite_model.tflite> > <output_C_header>.h
+# Replace with your file names, e.g.:
+# xxd -i mdet_int8_final.tflite > mdet_int8_final.h
+NOTE: The generator can output .h + .c arrays, but Arduino typically expects a single .h.
 
-TO USE THE EXPORT AND QUANTIZATION SCRIPT: Make sure the .h5 model name and path is correct. (The current expected name is the default one from the training script and the model is expected to be in the same directory as the eport script). Make sure to check the JSON file to verify everytinh seems okay. 
+TO USE THE EXPORT AND QUANTIZATION SCRIPT:
+Ensure the .h5 model path/name matches your output from training. (Default names align with the training script, and both scripts live in the same directory.) After export, inspect the JSON to confirm everything looks correct.
 
+Offline testing on images — test_inference.py
+This utility runs the quantized TFLite model on local PNG images and saves annotated results.
 
-### Arduino deployment
-The Arduino sketch requires the following files in the working directory: 
-- The insect_class_names.h C header. The file is required as the model's predictions are outputed as numbers. The sketch then converts the number to the correct insect name using the C header. 
-- The model as a C header .h. Because of the ESP32  memory limitations, the model MUST weight below 10Mo. Else the binary files will not fit insided the 3Mo APP partition. (This problem might be avoided by switching to a custom memory partition in the Arduino IDE, but this would only garanty that the APP size limit is not exceeded but there could be other memory limitations).
+What it does
 
-Arduino IDE Configuration: 
-Select the ESP32S3 Dev Module ( you need to install the correct packages for Espressif ESP boards in the Boards Manager). 
-IMPORTANT: Make sure to also add the Espressif Github URL in the Additional boards manager:
-1- Preferences
-2 - Paste the following adress in the Additational boards manager field: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_dev_index.json,https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-The USB CDC on Boot must be diasbled. 
-The flash size must be set to 16MB (128Mb). 
-The partition scheme must be: 16M flash (3MB APP/9.9MB FATFS). This is the best non-custom partition available. 
-PSRAM must be Enabled and set to OPI PSRAM. 
+Loads the TFLite model (mdet_int8_final.tflite by default).
 
-Libraries/Packages: 
-Make sure to have the ESP core installed and configured (download form the official Espressif webpage). 
-- Arduino.h: Default.
-- WiFi.h: Default.
-- WebServer.h: Default.
-- WiFiManager.h: Must be downloaded, available in embedded Library Manager.
-- Chirale_TensorFlowLite.h: Must be downloaded, available in embedded Library Manager.
-About the Chirale_TensorFlowLite.h: This is the best library I found ( most of the online examples of ESP32 IA model inference use it). Many other libraries you could find online are deprecated and not supported anymore.
+Infers the model’s quantization scale/zero-point and handles INT8 preprocessing automatically.
 
-About the Camera Configuration: 
-The current GPIO configuration works for the specific ESP32S3 Dev Module we used. If you are using another ESP Board, you might need to change the GPIO configuration. 
-You can adjust the frame_size, which is currently QVGA (320x240). 
-Important: Pixel format: THe sketch currently captures the frame as a JPEG. This seems counter intuitive as the code then converts the frame to an RGB image using the built-in Arduino JPEG decoder. This is because the switch to RGB capture format results into a memory crash during the set up. We didn't find any way around this. 
-Make sure to keep fb_location  = CAMERA_FB_IN_PSRAM as storing the fram buffers in DRAM is very likely to result in an overflow. 
+Applies the same YOLO-style decoding (S×S grid, 3 anchors) and NMS.
 
-Model preprocessing: 
-The model preprocessing fits the specific model we used, with INT8 quantization, simple 0-1 normalization. 
+Uses the built-in 24-class label list and generates colored overlays. 
 
+Folder & file expectations
 
+markdown
+Copier
+Modifier
+project_root/
+├── mdet_int8_final.tflite
+├── test_inference.py
+└── test_img_inference/
+    ├── img_001.png
+    ├── img_002.png
+    └── ...
+Model path default: mdet_int8_final.tflite (same directory as the script).
 
+Test images must be PNG files in test_img_inference/.
 
----
+Results are saved beside the script as results_<image>.png, plus an info copy such as detected_<class>_<score>_<image>.png. 
+
+Run it
+
+bash
+Copier
+Modifier
+python3 test_inference.py
+Notes
+
+Default confidence threshold is 0.25; change it by editing the initializer InsectDetector(model_path, conf_threshold=0.25).
+
+The script prints input/output tensor shapes & dtypes, the number of detections, and per-detection class / score / box (normalized).
+
+It dequantizes outputs when needed and performs NMS at IoU=0.45 (max 100 dets). 
+
+TO USE THE TEST INFERENCE SCRIPT:
+Place your TFLite model at the script root (or adjust the path), put a few PNGs into test_img_inference/, then run python3 test_inference.py. Check the console logs and the saved result images for detections. 
+
+Arduino deployment
+The Arduino sketch performs real-time capture from OV2640, converts frames to RGB, runs TFLite Micro INT8 inference, applies post-processing (decoding + NMS), and serves results via the device’s web UI.
+
+Files required in the sketch directory
+
+insect_class_names.h — maps class indices → names (used to render human-readable labels).
+
+The model as a single C header (e.g., mdet_int8_final.h) created with xxd -i.
+
+Due to ESP32 limits, the header should be well under ~10 MB or the APP partition may overflow when linking the sketch binary.
+
+Arduino IDE configuration
+
+Board: ESP32S3 Dev Module (install Espressif’s ESP32 core via Boards Manager).
+
+Additional Boards Manager URLs:
+
+bash
+Copier
+Modifier
+https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_dev_index.json,
+https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+USB CDC On Boot: Disabled
+
+Flash Size: 16MB (128Mb)
+
+Partition Scheme: 16MB Flash (3MB APP / 9.9MB FATFS) — best non-custom option to fit binary + assets
+
+PSRAM: Enabled → OPI PSRAM
+
+Libraries / packages
+
+Arduino.h, WiFi.h, WebServer.h — default (ESP core)
+
+WiFiManager.h — install via Library Manager
+
+Chirale_TensorFlowLite — install via Library Manager
+
+Rationale: reliable, actively maintained wrapper for TFLite Micro on ESP32; many alternatives online are deprecated.
+
+Camera configuration
+
+Current GPIO mapping fits the tested ESP32-S3 dev module; other boards may require pin map edits.
+
+frame_size: QVGA (320×240) works well for memory & latency.
+
+Pixel format: capture as JPEG, then convert to RGB using Arduino’s built-in JPEG decoder (fmt2rgb888).
+
+Capturing directly as RGB caused setup-time memory crashes; JPEG → RGB conversion has been stable.
+
+fb_location = CAMERA_FB_IN_PSRAM — keep this to avoid DRAM overflow.
+
+Model preprocessing
+
+The sketch expects INT8 input with simple [0,1] normalization behavior mirrored by the desktop pipeline.
+
+Ensure your header model matches the preprocessing in training/export so quantization ranges align.
+
+Build size & memory tips
+
+If you hit “text section exceeds available space”:
+
+Reduce model size (smaller ALPHA, fewer heads/anchors, prune classes).
+
+Ensure the 16MB (3MB APP / 9.9MB FATFS) partition is selected.
+
+Strip optional debug, remove web debug endpoints & assets.
+
+Keep PSRAM enabled and frame buffers in PSRAM.
+
+Avoid large global arrays and unnecessary static buffers in .ino files.
