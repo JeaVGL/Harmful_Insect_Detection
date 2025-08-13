@@ -304,7 +304,7 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
     // FALLBACK: If JPEG data is too similar between frames, force variation
     static uint32_t last_jpeg_seed = 0;
     if (abs((int)(jpeg_seed - last_jpeg_seed)) < 1000) {
-      logMessage(LOG_WARNING, "JPEG data too similar, forcing input variation");
+      logMessage(LOG_WARNING, " JPEG data too similar, forcing input variation");
       
       // Force variation by adding frame-specific patterns
       for (int i = 0; i < 1000; i += 10) {
@@ -378,7 +378,7 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
   free(temp_hwc_buffer);
   
   // Debug: Sample input values
-  logMessage(LOG_INFO, "🔍 INPUT VALIDATION:");
+  logMessage(LOG_INFO, " INPUT VALIDATION:");
   logMessage(LOG_INFO, "   Sample input values: [" + String((int)input_buffer[0]) + "," + 
              String((int)input_buffer[100]) + "," + String((int)input_buffer[500]) + "]");
   logMessage(LOG_INFO, "   Input range check: Expected INT8 (-128 to 127), Scale=" + String(input_scale, 6) + ", ZP=" + String(input_zp));
@@ -505,6 +505,20 @@ float calculateAverageConfidence(const Detection* dets, int count) {
 
 // Enhanced inference with comprehensive error handling and performance metrics
 String runInference() {
+  // Get camera frame
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) {
+    logMessage(LOG_ERROR, "Failed to capture frame");
+    return "{\"error\":\"frame_capture_failed\"}";
+  }
+  
+  String result = runInferenceWithFrame(fb);
+  esp_camera_fb_return(fb);
+  return result;
+}
+
+// New function that takes a frame parameter to avoid double capture
+String runInferenceWithFrame(camera_fb_t* fb) {
   unsigned long startTime = millis();
   
   // Input validation
@@ -513,16 +527,8 @@ String runInference() {
     return "{\"error\":\"tflite_not_initialized\"}";
   }
   
-  // Get camera frame
-  camera_fb_t* fb = esp_camera_fb_get();
-  if (!fb) {
-    logMessage(LOG_ERROR, "Failed to capture frame");
-    return "{\"error\":\"frame_capture_failed\"}";
-  }
-  
   // Validate frame buffer
   if (!fb->buf || fb->len == 0) {
-    esp_camera_fb_return(fb);
     logMessage(LOG_ERROR, "Invalid frame buffer");
     return "{\"error\":\"invalid_frame_buffer\"}";
   }
@@ -574,7 +580,7 @@ String runInference() {
   int changed_values = 0;
   
   if (!first_frame) {
-    logMessage(LOG_INFO, " INPUT TENSOR CHANGE ANALYSIS:");
+    logMessage(LOG_INFO, "INPUT TENSOR CHANGE ANALYSIS:");
     for (int i = 0; i < 10; i++) {
       if (input_samples[i] != prev_input_samples[i]) {
         changed_values++;
@@ -633,7 +639,7 @@ String runInference() {
   
                     // Note: Input tensor modification during inference is normal in TFLite Micro
                     // The model may use input tensor memory for intermediate calculations
-                    logMessage(LOG_INFO, " Input tensor modification during inference is normal in TFLite Micro");
+                    logMessage(LOG_INFO, "ℹ️ Input tensor modification during inference is normal in TFLite Micro");
                   
                   // Check tensor integrity after inference
                   checkTensorIntegrity("After inference");
@@ -665,7 +671,7 @@ String runInference() {
   int output_zp = output_tensor->params.zero_point;
   
   // DEBUG: Print output tensor info
-  logMessage(LOG_INFO, "OUTPUT TENSOR ANALYSIS:");
+  logMessage(LOG_INFO, " OUTPUT TENSOR ANALYSIS:");
   logMessage(LOG_INFO, "   Output tensor dimensions: [" + String(output_tensor->dims->data[0]) + "," + 
              String(output_tensor->dims->data[1]) + "," + String(output_tensor->dims->data[2]) + "," + 
              String(output_tensor->dims->data[3]) + "," + String(output_tensor->dims->data[4]) + "]");
@@ -680,7 +686,7 @@ String runInference() {
   int output_changed_values = 0;
   
   if (!first_output) {
-    logMessage(LOG_INFO, "MODEL OUTPUT CHANGE ANALYSIS:");
+    logMessage(LOG_INFO, " MODEL OUTPUT CHANGE ANALYSIS:");
     for (int i = 0; i < 6; i++) {
       if (raw_output[i] != prev_output_samples[i]) {
         output_changed_values++;
@@ -690,7 +696,7 @@ String runInference() {
     logMessage(LOG_INFO, "  Total output changed values: " + String(output_changed_values) + "/6");
     
     if (output_changed_values == 0) {
-      logMessage(LOG_ERROR, "CRITICAL: Model output is NOT changing between frames!");
+      logMessage(LOG_ERROR, " CRITICAL: Model output is NOT changing between frames!");
       logMessage(LOG_ERROR, "This indicates the model is not responding to different inputs.");
     } else if (output_changed_values < 2) {
       logMessage(LOG_WARNING, " WARNING: Very few output values are changing (" + String(output_changed_values) + "/6)");
@@ -724,7 +730,7 @@ String runInference() {
   // MDET v2 outputs: [1, 14, 14, 3, 29] where 29 = 1(obj) + 4(bbox) + 24(classes)
   Detection dets[MAX_DETECTIONS];
   int det_count = 0;
-  const float score_thresh = 0.15f;  // Confidence threshold for multi-anchor model
+  const float score_thresh = 0.03f;  // Confidence threshold for multi-anchor model
   const float nms_thresh = 0.45f;    // NMS threshold
   
   // Anchor sizes (relative to grid cell, normalized 0-1)
@@ -800,7 +806,7 @@ String runInference() {
   // Apply NMS to remove overlapping detections
   nms(dets, det_count, nms_thresh);
   
-  logMessage(LOG_INFO, "DETECTION RESULTS:");
+  logMessage(LOG_INFO, " DETECTION RESULTS:");
   logMessage(LOG_INFO, "   Detections found: " + String(det_count));
   logMessage(LOG_INFO, "   Total classes processed: " + String(num_classes));
 
@@ -863,31 +869,29 @@ String runInference() {
   }
   
   Serial.println("------------------------------------------------------------");
-  Serial.println("PERFORMANCE METRICS:");
-  Serial.println("  Inference Time: " + String(inferenceTime) + " ms");
-  Serial.println("  Average Time: " + String(perf.avgInferenceTime, 1) + " ms");
-  Serial.println("  Total Inferences: " + String(perf.totalInferences));
-  Serial.println("  Free Heap: " + String(esp_get_free_heap_size() / 1024) + " KB");
-  Serial.println("  Free PSRAM: " + String(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB");
+  Serial.println("⚡ PERFORMANCE METRICS:");
+  Serial.println("    Inference Time: " + String(inferenceTime) + " ms");
+  Serial.println("   Average Time: " + String(perf.avgInferenceTime, 1) + " ms");
+  Serial.println("   Total Inferences: " + String(perf.totalInferences));
+  Serial.println("   Free Heap: " + String(esp_get_free_heap_size() / 1024) + " KB");
+  Serial.println("   Free PSRAM: " + String(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB");
   Serial.println("============================================================\n");
 
   // Build enhanced JSON with class names and bounding boxes
   String json = "{\"detections\":[";
   for (int i = 0; i < det_count; i++) {
     const auto &d = dets[i];
-    json += "{\"class_id\":" + String(d.class_id);
-    json += ",\"class_name\":\"" + String(pest_names[d.class_id]) + "\"";
+    json += "{\"class\":\"" + String(pest_names[d.class_id]) + "\"";
     json += ",\"score\":" + String(d.score, 3);
-    json += ",\"bbox\":{";
-    json += "\"x1\":" + String(d.x1, 3);
-    json += ",\"y1\":" + String(d.y1, 3);
-    json += ",\"x2\":" + String(d.x2, 3);
-    json += ",\"y2\":" + String(d.y2, 3);
-    json += "}";
+    json += ",\"bbox\":[";
+    json += String(d.x1 * 224, 0) + "," + String(d.y1 * 224, 0) + ",";
+    json += String((d.x2 - d.x1) * 224, 0) + "," + String((d.y2 - d.y1) * 224, 0);
+    json += "]";
     json += "}";
     if (i < det_count - 1) json += ",";
   }
   json += "],";
+  json += "\"width\":224,\"height\":224,";
   json += "\"performance\":{";
   json += "\"inference_time_ms\":" + String(perf.lastInferenceTime);
   json += ",\"avg_inference_time_ms\":" + String(perf.avgInferenceTime, 1);
@@ -897,6 +901,9 @@ String runInference() {
   json += "}";
   json += "}";
   
+  // Debug: Log the generated JSON
+  logMessage(LOG_INFO, "Generated JSON: " + json);
+  
   return json;
 }
 
@@ -905,6 +912,12 @@ String runInference() {
 // Enhanced HTTP GET / -> run inference and provide rich web interface
 void handleRoot() {
   String detJson = runInference();
+  
+  // Debug: Log the JSON being sent to web interface
+  logMessage(LOG_INFO, "Sending JSON to web interface: " + detJson);
+  
+  // Escape quotes in JSON for safe embedding in HTML
+  detJson.replace("\"", "\\\"");
   
   String html = R"HTML(
 <!DOCTYPE html>
@@ -958,10 +971,40 @@ void handleRoot() {
             <h2>System Status</h2>
             <div id='systemStatus'></div>
         </div>
+        
+        <div class='section'>
+            <h2>Debug Info</h2>
+            <div id='debugInfo'></div>
+            <div style="background: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 5px;">
+                <h4>Raw JSON Data:</h4>
+                <pre id="rawJsonData" style="background: white; padding: 10px; overflow-x: auto;">)HTML" + detJson + R"HTML(</pre>
+            </div>
+        </div>
     </div>
 
     <script>
-        const detectionData = )HTML" + detJson + R"HTML(;
+        // Test if JavaScript is working
+        alert('JavaScript is working!');
+        
+        // Get the JSON data from the debug section and parse it
+        let detectionData;
+        try {
+            // Extract the JSON from the debug section
+            const rawJsonElement = document.querySelector('#rawJsonData');
+            if (!rawJsonElement) {
+                throw new Error('Raw JSON element not found');
+            }
+            
+            const rawJsonText = rawJsonElement.textContent;
+            console.log('Raw JSON text:', rawJsonText);
+            
+            // Parse the JSON
+            detectionData = JSON.parse(rawJsonText);
+            console.log('Detection data loaded successfully:', detectionData);
+        } catch (error) {
+            console.error('Error parsing detection data:', error);
+            detectionData = { error: 'Failed to parse detection data: ' + error.message };
+        }
         
         function displayResults(data) {
             const resultsDiv = document.getElementById('detectionResults');
@@ -979,11 +1022,11 @@ void handleRoot() {
                 data.detections.forEach((det, idx) => {
                     html += `
                         <div class='detection-item'>
-                            <h3>🐛 ${det.class_name || 'Unknown'} (ID: ${det.class_id})</h3>
+                            <h3>🐛 ${det.class || 'Unknown'}</h3>
                             <p><strong>Confidence:</strong> ${(det.score * 100).toFixed(1)}%</p>
                             <p><strong>Bounding Box:</strong> 
-                               x1=${det.bbox.x1}, y1=${det.bbox.y1}, 
-                               x2=${det.bbox.x2}, y2=${det.bbox.y2}</p>
+                               x=${det.bbox[0]}, y=${det.bbox[1]}, 
+                               w=${det.bbox[2]}, h=${det.bbox[3]}</p>
                         </div>
                     `;
                 });
@@ -1025,6 +1068,13 @@ void handleRoot() {
                 <p><strong>Last Update:</strong> ${new Date().toLocaleString()}</p>
                 <p><strong>Available Classes:</strong> 24 insect species</p>
             `;
+            
+            // Debug info
+            document.getElementById('debugInfo').innerHTML = `
+                <p><strong>Raw JSON:</strong> <pre>${JSON.stringify(data, null, 2)}</pre></p>
+                <p><strong>Detection Count:</strong> ${data.detections ? data.detections.length : 'undefined'}</p>
+                <p><strong>First Detection:</strong> ${data.detections && data.detections[0] ? JSON.stringify(data.detections[0]) : 'undefined'}</p>
+            `;
         }
         
         function runNewInference() {
@@ -1040,14 +1090,20 @@ void handleRoot() {
 
         
         // Initialize display
-        displayResults(detectionData);
-        
-        // Send data to log endpoint
-        fetch('/log', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(detectionData)
-        });
+        if (detectionData && !detectionData.error) {
+            displayResults(detectionData);
+            
+            // Send data to log endpoint
+            fetch('/log', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(detectionData)
+            });
+        } else {
+            // Show error state
+            document.getElementById('detectionResults').innerHTML = '<div class="error">❌ Failed to load detection data</div>';
+            console.error('Detection data error:', detectionData);
+        }
     </script>
 </body>
 </html>
@@ -1065,7 +1121,9 @@ void handleLog() {
 
 // New endpoint: GET /api/detect -> JSON-only inference
 void handleAPIDetect() {
+  logMessage(LOG_INFO, " API Detect request received from: " + server.client().remoteIP().toString());
   String detJson = runInference();
+  logMessage(LOG_INFO, " Sending detection response to: " + server.client().remoteIP().toString());
   server.send(200, "application/json", detJson);
 }
 
@@ -1108,6 +1166,33 @@ void handleAPIClasses() {
   }
   json += "]}";
   server.send(200, "application/json", json);
+}
+
+// New endpoint: GET /frame.jpg -> Camera frame for Flutter app
+void handleFrame() {
+  // Force a fresh camera capture
+  esp_camera_fb_return(esp_camera_fb_get()); // Clear any existing buffer
+  
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) {
+    server.send(500, "text/plain", "Failed to capture frame");
+    return;
+  }
+  
+  server.sendHeader("Content-Type", "image/jpeg");
+  server.sendHeader("Content-Disposition", "inline; filename=frame.jpg");
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "0");
+  server.sendHeader("Last-Modified", "Mon, 01 Jan 2024 00:00:00 GMT");
+  
+  // Use the correct send method for binary data
+  // Convert uint8_t* to const char* for send_P method
+  server.send_P(200, "image/jpeg", (const char*)fb->buf, fb->len);
+  
+  esp_camera_fb_return(fb);
+  
+  logMessage(LOG_INFO, "Fresh camera frame served - Size: " + String(fb->len) + " bytes");
 }
 
 // New endpoint: GET /api/inference -> Normal inference
@@ -1257,12 +1342,12 @@ void setup() {
     logMessage(LOG_INFO, "Trying to allocate " + String(arena_size/1024) + " KB tensor arena...");
     tensor_arena = (uint8_t*) heap_caps_malloc(arena_size, MALLOC_CAP_SPIRAM);
     if (tensor_arena) {
-      logMessage(LOG_INFO, "Tensor arena allocated successfully: " + String(arena_size/1024) + " KB");
+      logMessage(LOG_INFO, "✅ Tensor arena allocated successfully: " + String(arena_size/1024) + " KB");
       arena_allocated = true;
       actual_arena_size = arena_size;
       break;
     } else {
-      logMessage(LOG_WARNING, "Failed to allocate " + String(arena_size/1024) + " KB, trying next size...");
+      logMessage(LOG_WARNING, "❌ Failed to allocate " + String(arena_size/1024) + " KB, trying next size...");
     }
   }
   
@@ -1318,17 +1403,17 @@ void setup() {
   
   // ENHANCED CRITICAL: Check actual arena usage to diagnose overflow
   size_t arena_used_bytes = interpreter->arena_used_bytes();
-  logMessage(LOG_INFO, "🔍 TENSOR ARENA ANALYSIS:");
+  logMessage(LOG_INFO, " TENSOR ARENA ANALYSIS:");
   logMessage(LOG_INFO, "  Arena used: " + String(arena_used_bytes) + " bytes");
   logMessage(LOG_INFO, "  Arena size: " + String(actual_arena_size) + " bytes");
   logMessage(LOG_INFO, "  Arena usage: " + String((arena_used_bytes * 100) / actual_arena_size) + "%");
   
   if (arena_used_bytes > actual_arena_size * 0.9) {
-    logMessage(LOG_ERROR, "WARNING: Tensor arena usage > 90% - risk of overflow!");
+    logMessage(LOG_ERROR, " WARNING: Tensor arena usage > 90% - risk of overflow!");
   }
   
   // Enhanced memory analysis
-  logMessage(LOG_INFO, "ENHANCED MEMORY ANALYSIS:");
+  logMessage(LOG_INFO, " ENHANCED MEMORY ANALYSIS:");
   size_t free_heap = ESP.getFreeHeap();
   size_t min_free_heap = ESP.getMinFreeHeap();
   size_t max_alloc_heap = ESP.getMaxAllocHeap();
@@ -1338,11 +1423,11 @@ void setup() {
   logMessage(LOG_INFO, "  Max alloc heap: " + String(max_alloc_heap) + " bytes");
   
   if (free_heap < 100000) {
-    logMessage(LOG_WARNING, "Low heap memory - may cause issues");
+    logMessage(LOG_WARNING, " Low heap memory - may cause issues");
   }
   
   if (min_free_heap < 50000) {
-    logMessage(LOG_ERROR, "Very low minimum heap - high risk of corruption!");
+    logMessage(LOG_ERROR, " Very low minimum heap - high risk of corruption!");
   }
   logMessage(LOG_INFO, "   Arena allocated: " + String(actual_arena_size / 1024) + " KB");
   logMessage(LOG_INFO, "   Arena actually used: " + String(arena_used_bytes / 1024) + " KB");
@@ -1350,12 +1435,12 @@ void setup() {
   logMessage(LOG_INFO, "   Free arena space: " + String((actual_arena_size - arena_used_bytes) / 1024) + " KB");
   
   if (arena_used_bytes > actual_arena_size * 0.95f) {
-    logMessage(LOG_ERROR, "ARENA NEARLY FULL! This will cause memory corruption during inference!");
+    logMessage(LOG_ERROR, " ARENA NEARLY FULL! This will cause memory corruption during inference!");
     logMessage(LOG_ERROR, "Increase kTensorArenaSize to at least " + String((arena_used_bytes * 1.2f) / 1024) + " KB");
   } else if (arena_used_bytes > actual_arena_size * 0.85f) {
-    logMessage(LOG_WARNING, "Arena usage high - may cause overflow with scratch operations");
+    logMessage(LOG_WARNING, "  Arena usage high - may cause overflow with scratch operations");
   } else {
-    logMessage(LOG_INFO, "Arena size appears adequate");
+    logMessage(LOG_INFO, " Arena size appears adequate");
   }
   
   size_t postAllocateDram = heap_caps_get_free_size(MALLOC_CAP_8BIT) - heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
@@ -1375,7 +1460,7 @@ void setup() {
   checkTensorIntegrity("After tensor allocation");
   
   // DEBUG: Check model quantization parameters for full INT8
-  logMessage(LOG_INFO, "FULL INT8 MODEL QUANTIZATION PARAMETERS:");
+  logMessage(LOG_INFO, " FULL INT8 MODEL QUANTIZATION PARAMETERS:");
   logMessage(LOG_INFO, "   Input scale: " + String(input->params.scale, 6));
   logMessage(LOG_INFO, "   Input zero point: " + String(input->params.zero_point));
   logMessage(LOG_INFO, "   Output tensor scale: " + String(output_tensor->params.scale, 6));
@@ -1385,7 +1470,7 @@ void setup() {
   
   // Validate full INT8 quantization
   if (input->params.scale == 0.0f || output_tensor->params.scale == 0.0f) {
-    logMessage(LOG_ERROR, "CRITICAL: Model quantization parameters are zero!");
+    logMessage(LOG_ERROR, " CRITICAL: Model quantization parameters are zero!");
     logMessage(LOG_ERROR, "This indicates the model is not properly quantized for TFLite Micro");
     return;
   }
@@ -1434,12 +1519,305 @@ void setup() {
   server.on("/api/status", HTTP_GET, handleAPIStatus);
   server.on("/api/classes", HTTP_GET, handleAPIClasses);
   server.on("/api/inference", HTTP_GET, handleAPINormalInference);
+  server.on("/frame.jpg", HTTP_GET, handleFrame);
+  
+  // Add a simple health check endpoint
+  server.on("/health", HTTP_GET, []() {
+    logMessage(LOG_INFO, " Health check request received from: " + server.client().remoteIP().toString());
+    server.send(200, "application/json", "{\"status\":\"ok\",\"uptime_ms\":" + String(millis()) + "}");
+  });
+  
+  // Add camera view endpoint with detections overlay
+  server.on("/camera-view", HTTP_GET, []() {
+    logMessage(LOG_INFO, "Camera view request received from: " + server.client().remoteIP().toString());
+    
+    String html = "<!DOCTYPE html>";
+    html += "<html>";
+    html += "<head>";
+    html += "<title>ESP32 Camera View - Live Detections</title>";
+    html += "<meta charset=\"utf-8\">";
+    html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+    html += "<style>";
+    html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }";
+    html += ".container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }";
+    html += ".camera-section { text-align: center; margin-bottom: 30px; }";
+    html += ".camera-container { position: relative; display: inline-block; border: 3px solid #4CAF50; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }";
+    html += ".camera-image { max-width: 100%; height: auto; display: block; }";
+    html += ".detection-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }";
+    html += ".detection-box { position: absolute; border: 3px solid #FF5722; background: rgba(255, 87, 34, 0.2); border-radius: 5px; }";
+    html += ".detection-label { position: absolute; top: -25px; left: 0; background: #FF5722; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: bold; white-space: nowrap; }";
+    html += ".controls { margin: 20px 0; }";
+    html += ".btn { background: #4CAF50; color: white; border: none; padding: 10px 20px; margin: 5px; border-radius: 5px; cursor: pointer; font-size: 16px; }";
+    html += ".btn:hover { background: #45a049; }";
+    html += ".status { background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #4CAF50; }";
+    html += ".detections-info { background: #fff3e0; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #FF9800; }";
+    html += ".detection-item { background: white; padding: 10px; margin: 10px 0; border-radius: 5px; border: 1px solid #ddd; }";
+    html += ".performance { background: #f3e5f5; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #9C27B0; }";
+    html += ".performance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }";
+    html += ".performance-item { background: white; padding: 10px; border-radius: 5px; text-align: center; }";
+    html += ".performance-value { font-size: 24px; font-weight: bold; color: #9C27B0; }";
+    html += ".performance-label { color: #666; font-size: 14px; }";
+    html += ".refresh-indicator { display: inline-block; margin-left: 10px; color: #666; }";
+    html += "@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }";
+    html += ".spinning { animation: spin 1s linear infinite; }";
+    html += "</style>";
+    html += "</head>";
+    html += "<body>";
+    html += "<div class=\"container\">";
+    html += "<h1>ESP32 Pest Detection - Live Camera View</h1>";
+    html += "<div class=\"camera-section\">";
+    html += "<div class=\"camera-container\">";
+    html += "<img id=\"cameraImage\" class=\"camera-image\" src=\"/frame.jpg\" alt=\"Live Camera Feed\">";
+    html += "<div id=\"detectionOverlay\" class=\"detection-overlay\"></div>";
+    html += "</div>";
+    html += "<div class=\"controls\">";
+    html += "<button class=\"btn\" onclick=\"refreshImage()\">Refresh Image</button>";
+    html += "<button class=\"btn\" onclick=\"forceImageRefresh()\">Force Refresh</button>";
+    html += "<button class=\"btn\" onclick=\"toggleAutoRefresh()\">Pause Auto-Refresh</button>";
+    html += "<button class=\"btn\" onclick=\"fetchDetections()\">Fetch Detections</button>";
+    html += "<span id=\"refreshIndicator\" class=\"refresh-indicator\">Auto-refreshing every 3s</span>";
+    html += "</div>";
+    html += "</div>";
+    html += "<div class=\"status\">";
+    html += "<h3>System Status</h3>";
+    html += "<p><strong>Last Update:</strong> <span id=\"lastUpdate\">Never</span></p>";
+    html += "<p><strong>Image Refresh:</strong> <span id=\"imageStatus\">Ready</span></p>";
+    html += "<p><strong>Detection Count:</strong> <span id=\"detectionCount\">0</span> pests detected</p>";
+    html += "</div>";
+    html += "<div class=\"detections-info\">";
+    html += "<h3>Live Detections</h3>";
+    html += "<div id=\"detectionsList\">No detections yet...</div>";
+    html += "</div>";
+    html += "<div class=\"performance\">";
+    html += "<h3>Performance Metrics</h3>";
+    html += "<div class=\"performance-grid\" id=\"performanceGrid\">";
+    html += "<div class=\"performance-item\">";
+    html += "<div class=\"performance-value\" id=\"inferenceTime\">--</div>";
+    html += "<div class=\"performance-label\">Inference Time (ms)</div>";
+    html += "</div>";
+    html += "<div class=\"performance-item\">";
+    html += "<div class=\"performance-value\" id=\"totalInferences\">--</div>";
+    html += "<div class=\"performance-label\">Total Inferences</div>";
+    html += "</div>";
+    html += "<div class=\"performance-item\">";
+    html += "<div class=\"performance-value\" id=\"freeHeap\">--</div>";
+    html += "<div class=\"performance-label\">Free Heap (MB)</div>";
+    html += "</div>";
+    html += "<div class=\"performance-item\">";
+    html += "<div class=\"performance-value\" id=\"freePSRAM\">--</div>";
+    html += "<div class=\"performance-label\">Free PSRAM (MB)</div>";
+    html += "</div>";
+    html += "</div>";
+    html += "</div>";
+    html += "</div>";
+    html += "<script>";
+    html += "var autoRefresh = true;";
+    html += "var refreshInterval;";
+    html += "document.addEventListener('DOMContentLoaded', function() {";
+    html += "fetchDetections();";
+    html += "startAutoRefresh();";
+    html += "});";
+    html += "function startAutoRefresh() {";
+    html += "refreshInterval = setInterval(function() {";
+    html += "if (autoRefresh) {";
+    html += "console.log('Auto-refresh triggered at: ' + new Date().toLocaleTimeString());";
+    html += "forceImageRefresh();";
+    html += "fetchDetections();";
+    html += "}";
+    html += "}, 3000);";
+    html += "}";
+    html += "function forceImageRefresh() {";
+    html += "var img = document.getElementById('cameraImage');";
+    html += "var status = document.getElementById('imageStatus');";
+    html += "var indicator = document.getElementById('refreshIndicator');";
+    html += "status.textContent = 'Forcing refresh...';";
+    html += "indicator.classList.add('spinning');";
+    html += "console.log('Force refreshing image...');";
+    html += "var timestamp = Date.now();";
+    html += "var newSrc = '/frame.jpg?t=' + timestamp + '&v=' + Math.random();";
+    html += "console.log('Force refresh src: ' + newSrc);";
+    html += "img.src = newSrc;";
+    html += "img.onload = function() {";
+    html += "status.textContent = 'Ready (forced)';";
+    html += "indicator.classList.remove('spinning');";
+    html += "document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();";
+    html += "console.log('Force refresh successful at: ' + timestamp);";
+    html += "};";
+    html += "img.onerror = function() {";
+    html += "status.textContent = 'Force refresh failed';";
+    html += "indicator.classList.remove('spinning');";
+    html += "console.log('Force refresh failed at: ' + timestamp);";
+    html += "};";
+    html += "}";
+    html += "function toggleAutoRefresh() {";
+    html += "autoRefresh = !autoRefresh;";
+    html += "var btn = event.target;";
+    html += "if (autoRefresh) {";
+    html += "btn.textContent = 'Pause Auto-Refresh';";
+    html += "btn.style.background = '#4CAF50';";
+    html += "document.getElementById('refreshIndicator').textContent = 'Auto-refreshing every 3s';";
+    html += "} else {";
+    html += "btn.textContent = 'Resume Auto-Refresh';";
+    html += "btn.style.background = '#FF9800';";
+    html += "document.getElementById('refreshIndicator').textContent = 'Auto-refresh paused';";
+    html += "}";
+    html += "}";
+    html += "function refreshImage() {";
+    html += "var img = document.getElementById('cameraImage');";
+    html += "var status = document.getElementById('imageStatus');";
+    html += "var indicator = document.getElementById('refreshIndicator');";
+    html += "status.textContent = 'Refreshing...';";
+    html += "indicator.classList.add('spinning');";
+    html += "console.log('Refreshing image...');";
+    html += "console.log('Current image src: ' + img.src);";
+    html += "var newSrc = '/frame.jpg?t=' + Date.now();";
+    html += "console.log('New image src: ' + newSrc);";
+    html += "img.src = newSrc;";
+    html += "img.onload = function() {";
+    html += "status.textContent = 'Ready';";
+    html += "indicator.classList.remove('spinning');";
+    html += "document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();";
+    html += "console.log('Image refreshed successfully');";
+    html += "console.log('Image dimensions: ' + img.naturalWidth + 'x' + img.naturalHeight);";
+    html += "};";
+    html += "img.onerror = function() {";
+    html += "status.textContent = 'Error loading image';";
+    html += "indicator.classList.remove('spinning');";
+    html += "console.log('Error loading image');";
+    html += "console.log('Error details: ' + img.src);";
+    html += "};";
+    html += "}";
+    html += "function fetchDetections() {";
+    html += "fetch('/api/detect')";
+    html += ".then(function(response) { return response.json(); })";
+    html += ".then(function(data) {";
+    html += "displayDetections(data);";
+    html += "updatePerformance(data.performance);";
+    html += "})";
+    html += ".catch(function(error) {";
+    html += "console.error('Error fetching detections:', error);";
+    html += "document.getElementById('detectionsList').innerHTML = '<p style=\"color: red;\">Error loading detections</p>';";
+    html += "});";
+    html += "}";
+    html += "function displayDetections(data) {";
+    html += "var detectionsList = document.getElementById('detectionsList');";
+    html += "var detectionCount = document.getElementById('detectionCount');";
+    html += "var overlay = document.getElementById('detectionOverlay');";
+    html += "if (data.detections && data.detections.length > 0) {";
+    html += "detectionCount.textContent = data.detections.length;";
+    html += "var html = '';";
+    html += "overlay.innerHTML = '';";
+    html += "for (var i = 0; i < data.detections.length; i++) {";
+    html += "var det = data.detections[i];";
+    html += "var box = document.createElement('div');";
+    html += "box.className = 'detection-box';";
+    html += "box.style.left = (det.bbox[0] / data.width * 100) + '%';";
+    html += "box.style.top = (det.bbox[1] / data.height * 100) + '%';";
+    html += "box.style.width = (det.bbox[2] / data.width * 100) + '%';";
+    html += "box.style.height = (det.bbox[3] / data.height * 100) + '%';";
+    html += "var label = document.createElement('div');";
+    html += "label.className = 'detection-label';";
+    html += "label.textContent = det.class + ' (' + (det.score * 100).toFixed(1) + '%)';";
+    html += "box.appendChild(label);";
+    html += "overlay.appendChild(box);";
+    html += "html += '<div class=\"detection-item\">';";
+    html += "html += '<h3>' + det.class + '</h3>';";
+    html += "html += '<p><strong>Confidence:</strong> ' + (det.score * 100).toFixed(1) + '%</p>';";
+    html += "html += '<p><strong>Location:</strong> x=' + det.bbox[0] + ', y=' + det.bbox[1] + ', w=' + det.bbox[2] + ', h=' + det.bbox[3] + '</p>';";
+    html += "html += '</div>';";
+    html += "}";
+    html += "detectionsList.innerHTML = html;";
+    html += "} else {";
+    html += "detectionCount.textContent = '0';";
+    html += "detectionsList.innerHTML = '<p>No pests detected in current frame</p>';";
+    html += "overlay.innerHTML = '';";
+    html += "}";
+    html += "}";
+    html += "function updatePerformance(perf) {";
+    html += "if (perf) {";
+    html += "document.getElementById('inferenceTime').textContent = perf.inference_time_ms || '--';";
+    html += "document.getElementById('totalInferences').textContent = perf.total_inferences || '--';";
+    html += "document.getElementById('freeHeap').textContent = Math.round((perf.free_heap || 0) / 1024 / 1024) + ' MB';";
+    html += "document.getElementById('freePSRAM').textContent = Math.round((perf.free_psram || 0) / 1024 / 1024) + ' MB';";
+    html += "}";
+    html += "}";
+    html += "</script>";
+    html += "</body>";
+    html += "</html>";
+    
+    server.send(200, "text/html", html);
+  });
+  
+  // Add a network test endpoint
+  server.on("/network-test", HTTP_GET, []() {
+    String clientIP = server.client().remoteIP().toString();
+    logMessage(LOG_INFO, "Network test request received from: " + clientIP);
+    
+    String response = "{";
+    response += "\"status\":\"connected\",";
+    response += "\"client_ip\":\"" + clientIP + "\",";
+    response += "\"esp32_ip\":\"" + WiFi.localIP().toString() + "\",";
+    response += "\"gateway\":\"" + WiFi.gatewayIP().toString() + "\",";
+    response += "\"subnet\":\"" + WiFi.subnetMask().toString() + "\",";
+    response += "\"timestamp\":" + String(millis());
+    response += "}";
+    
+    server.send(200, "application/json", response);
+  });
+  
+  // Add a button test endpoint
+  server.on("/button-test", HTTP_GET, []() {
+    String clientIP = server.client().remoteIP().toString();
+    logMessage(LOG_INFO, "Button test request received from: " + clientIP);
+    
+    String response = "{";
+    response += "\"status\":\"button_clicked\",";
+    response += "\"timestamp\":" + String(millis());
+    response += "}";
+    
+    server.send(200, "application/json", response);
+  });
   
   // Enable CORS for API endpoints
   server.enableCORS(true);
   
   server.begin();
   logMessage(LOG_INFO, "HTTP server started on port 80");
+  
+  // Network debugging info
+  logMessage(LOG_INFO, "=== Network Configuration ===");
+  logMessage(LOG_INFO, "WiFi SSID: " + WiFi.SSID());
+  logMessage(LOG_INFO, "WiFi IP: " + WiFi.localIP().toString());
+  logMessage(LOG_INFO, "WiFi Gateway: " + WiFi.gatewayIP().toString());
+  logMessage(LOG_INFO, "WiFi Subnet: " + WiFi.subnetMask().toString());
+  logMessage(LOG_INFO, "WiFi DNS: " + WiFi.dnsIP().toString());
+  logMessage(LOG_INFO, "WiFi Channel: " + String(WiFi.channel()));
+  logMessage(LOG_INFO, "WiFi RSSI: " + String(WiFi.RSSI()) + " dBm");
+  
+  // Test network connectivity
+  logMessage(LOG_INFO, "=== TESTING NETWORK CONNECTIVITY ===");
+  
+  // Test 1: Can ESP32 reach its own gateway?
+  WiFiClient gatewayClient;
+  if (gatewayClient.connect(WiFi.gatewayIP(), 80)) {
+    logMessage(LOG_INFO, "Gateway connectivity: SUCCESS");
+    gatewayClient.stop();
+  } else {
+    logMessage(LOG_INFO, "Gateway connectivity: FAILED");
+  }
+  
+  // Test 2: Can ESP32 reach external internet?
+  WiFiClient internetClient;
+  if (internetClient.connect("8.8.8.8", 53)) {
+    logMessage(LOG_INFO, "Internet connectivity: SUCCESS");
+    internetClient.stop();
+  } else {
+    logMessage(LOG_INFO, "Internet connectivity: FAILED");
+  }
+  
+  // Test 3: Check if WebServer is properly bound
+  logMessage(LOG_INFO, "WebServer status: READY");
+  logMessage(LOG_INFO, "=============================");
   
   // Final system status
   logMessage(LOG_INFO, "=== System Ready ===");
@@ -1453,95 +1831,49 @@ void setup() {
 }
 
 void loop() {
-  if (!input || !interpreter) { // Changed from class_output/bbox_output to interpreter
+  // Handle HTTP requests FIRST - this is critical for responsiveness
+  server.handleClient();
+  
+  if (!input || !interpreter) {
     Serial.println("[ERROR] TFLite not initialized");
     delay(1000);
     return;
   }
   
-  // ADDITIONAL DEBUG: Test camera functionality before inference
+  // Simplified camera test - only run every 10 seconds to reduce overhead
   static int frame_counter = 0;
-  static uint32_t last_jpeg_hash = 0;
+  static unsigned long last_camera_test = 0;
+  unsigned long current_time = millis();
   
-  // Capture a test frame to verify camera is working
-  camera_fb_t* test_fb = esp_camera_fb_get();
-  if (test_fb && test_fb->buf && test_fb->len > 0) {
-    // Calculate a simple hash of the JPEG data to see if it's changing
-    uint32_t jpeg_hash = 0;
-    for (int i = 0; i < simple_min(100, (int)test_fb->len); i++) {
-      jpeg_hash = ((jpeg_hash << 5) + jpeg_hash) + test_fb->buf[i]; // Simple rolling hash
-    }
-    
-    if (frame_counter > 0) {
-      if (jpeg_hash == last_jpeg_hash) {
-        logMessage(LOG_WARNING, "Camera may be stuck - JPEG hash identical: " + String(jpeg_hash));
-        
-        // ADDITIONAL DEBUG: Show JPEG data analysis
-        logMessage(LOG_INFO, "JPEG Data Analysis:");
-        logMessage(LOG_INFO, "   Frame length: " + String(test_fb->len) + " bytes");
-        logMessage(LOG_INFO, "   First 10 bytes: [" + String(test_fb->buf[0]) + "," + String(test_fb->buf[1]) + 
-                   "," + String(test_fb->buf[2]) + "," + String(test_fb->buf[3]) + "," + String(test_fb->buf[4]) + 
-                   "," + String(test_fb->buf[5]) + "," + String(test_fb->buf[6]) + "," + String(test_fb->buf[7]) + 
-                   "," + String(test_fb->buf[8]) + "," + String(test_fb->buf[9]) + "]");
-        
-        // Check if JPEG data is actually changing at all
-        static uint8_t prev_jpeg_bytes[10] = {0};
-        int jpeg_changes = 0;
-        for (int i = 0; i < 10; i++) {
-          if (test_fb->buf[i] != prev_jpeg_bytes[i]) {
-            jpeg_changes++;
-            prev_jpeg_bytes[i] = test_fb->buf[i];
-          }
-        }
-        logMessage(LOG_INFO, "   JPEG byte changes: " + String(jpeg_changes) + "/10");
-        
-        if (jpeg_changes == 0) {
-          logMessage(LOG_ERROR, "CRITICAL: JPEG data is completely static - camera sensor may be malfunctioning!");
-        }
-      } else {
-        logMessage(LOG_INFO, "Camera working - JPEG hash changed: " + String(last_jpeg_hash) + " -> " + String(jpeg_hash));
-      }
-    }
-    
-    last_jpeg_hash = jpeg_hash;
+  // Only run camera tests and inference every 10 seconds to keep server responsive
+  if (current_time - last_camera_test >= 10000) {
+    last_camera_test = current_time;
     frame_counter++;
-    esp_camera_fb_return(test_fb);
-  } else {
-    logMessage(LOG_ERROR, "Camera test frame capture failed");
-  }
-  
-  // Run inference and print predictions to Serial
-  runInference();
-  
-  // ADDITIONAL TEST: Every 10th frame, test with a different input pattern
-  if (frame_counter % 10 == 0) {
-    logMessage(LOG_INFO, "TESTING MODEL RESPONSIVENESS - Frame #" + String(frame_counter));
     
-    // Create a test pattern that's clearly different
-    int8_t* test_input = (int8_t*)input->data.int8;
-    for (int i = 0; i < 1000; i++) {
-      test_input[i] = (i % 256) - 128; // Create a clear pattern: -128, -127, -126, ..., 127, -128, ...
-    }
-    
-    // Run inference with test pattern
-    TfLiteStatus test_status = interpreter->Invoke();
-    if (test_status == kTfLiteOk) {
-      int8_t* test_output = output_tensor->data.int8;
-      logMessage(LOG_INFO, "Test inference successful - Output samples: [" + 
-                 String(test_output[0]) + "," + String(test_output[1]) + "," + String(test_output[2]) + "]");
+    // Capture ONE image and use it for both camera test AND inference
+    camera_fb_t* test_fb = esp_camera_fb_get();
+    if (test_fb && test_fb->buf && test_fb->len > 0) {
+      logMessage(LOG_INFO, "Camera frame #" + String(frame_counter) + " - Size: " + String(test_fb->len) + " bytes");
       
-      // Check if output is different from normal camera input by comparing with global prev_output_samples
-      if (test_output[0] != prev_output_samples[0] || test_output[1] != prev_output_samples[1]) {
-        logMessage(LOG_INFO, "Model is responsive to different inputs");
-      } else {
-        logMessage(LOG_WARNING, "Model output unchanged with test pattern - possible issue");
-      }
+      // Store the frame for inference instead of discarding it
+      // We'll pass this frame to runInference() to avoid double capture
+      
+      // Run inference with the SAME frame (this is the heavy operation)
+      logMessage(LOG_INFO, "Running inference on fresh frame...");
+      runInferenceWithFrame(test_fb); // New function that takes the frame
+      
+      // Return the frame after inference
+      esp_camera_fb_return(test_fb);
     } else {
-      logMessage(LOG_ERROR, "Test inference failed with status: " + String(test_status));
+      logMessage(LOG_ERROR, "Camera test frame capture failed");
     }
   }
   
-  delay(1000); // Run every second
+  // Handle HTTP requests more frequently
+  server.handleClient();
+  
+  // Smaller delay to keep server responsive
+  delay(50);
 }
 
 
