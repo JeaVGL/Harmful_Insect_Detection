@@ -1,5 +1,6 @@
 The trained model is a custom model based on the SSD MobilenetV2 architecture and exported as a TFLite model after a full INT8 quantization. 
-This folder features the model as C header (.h) and as a .tflite, the training script and the export and quantization script.
+This folder features the model as C header (.h) and as a .tflite, the training script and the export and quantization script. 
+You can also use the test_inference.py script to test the quantized version of the model by infering test images and looking at the results. 
 
 The list of the packages we used in our training environment is avaible in requirements_mobilenet.txt.
 
