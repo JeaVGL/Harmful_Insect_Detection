@@ -193,3 +193,6 @@ https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32
 - [ ] Test locally with `test_inference.py` on sample PNGs  
 - [ ] Flash Arduino sketch with correct board, partitions, PSRAM & libraries  
 - [ ] Confirm live detections and memory stability
+
+
+For any further questions, don't hesitate to reach out to me at: jean.goettmann-vogel@etu.unice.fr
