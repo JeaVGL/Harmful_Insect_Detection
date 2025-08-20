@@ -187,9 +187,9 @@ https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32
 **WiFi connection**
 - The ESP32 IP adress is now hardcoded, so no need to check the terminal to see what it is.
 - Hardcoded IP adress: http://192.168.1.200/
-**- !! Make sure this adress is available on the network !!**
-**- !! Make sure the hardcoded adress matches the router's IP !!**
-**- You might have to modify the adress accordingly.** 
+- **Make sure this adress is available on the network !!**
+- **Make sure the hardcoded adress matches the router's IP !!**
+- **You might have to modify the adress accordingly.** 
 ---
 
 ## Quick repo checklist
