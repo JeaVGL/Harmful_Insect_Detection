@@ -200,6 +200,6 @@ https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32
 - [ ] Flash Arduino sketch with correct board, partitions, PSRAM & libraries  
 - [ ] Confirm live detections and memory stability
 
-Link to the video presentation: https://youtu.be/XxDdKnM7C6M
+Link to the video presentation: https://youtu.be/Ff4nhkI2S9Y
 
 For any further questions, don't hesitate to reach out to me at: jean.goettmann-vogel@etu.unice.fr
