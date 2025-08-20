@@ -90,6 +90,12 @@ void debugSaveDecodedImage(uint8_t* rgb_buffer, int width, int height, const cha
 // Using WiFiManager for secure credential management
 WiFiManager wifiManager;
 
+// Static IP configuration
+IPAddress staticIP(192, 168, 1, 200);    // Your desired static IP
+IPAddress gateway(192, 168, 1, 1);       // Your router's IP
+IPAddress subnet(255, 255, 255, 0);      // Subnet mask
+IPAddress dns(8, 8, 8, 8);              // DNS server (Google's 8.8.8.8)
+
 // HTTP server sur port 80
 WebServer server(80);
 
@@ -1313,6 +1319,9 @@ void setup() {
     logMessage(LOG_INFO, "WiFi configuration saved");
   });
 
+  // Set static IP configuration
+  wifiManager.setSTAStaticIPConfig(staticIP, gateway, subnet, dns);
+  
   // Try to connect; if it fails, start configuration portal
   if (!wifiManager.autoConnect("InsectRecog-Setup")) {
     logMessage(LOG_ERROR, "Failed to connect to WiFi and hit timeout");
