@@ -907,7 +907,7 @@ String runInferenceWithFrame(camera_fb_t* fb) {
 
   // Print detection results to Serial Monitor for Arduino IDE
   Serial.println("\n============================================================");
-  Serial.println(" NANODET PEST DETECTION RESULTS - MDET v2 Multi-Anchor Model");
+  Serial.println(" PEST DETECTION RESULTS - MDET v2 Multi-Anchor Model");
   Serial.println("============================================================");
   
   if (det_count > 0) {
@@ -1012,7 +1012,7 @@ void handleRoot() {
 <head>
     <meta charset='utf-8'>
     <meta name='viewport' content='width=device-width, initial-scale=1'>
-    <title>NanoDet Pest Detection System</title>
+    <title>Pest Detection System</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f2f5; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -1033,7 +1033,7 @@ void handleRoot() {
 <body>
     <div class='container'>
         <div class='header'>
-            <h1>🐛 NanoDet Pest Detection System</h1>
+            <h1>🐛 Pest Detection System</h1>
             <p>AI-powered insect detection using ESP32-S3 and TensorFlow Lite</p>
         </div>
         
@@ -1295,7 +1295,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial) delay(1);
   
-  logMessage(LOG_INFO, "=== NanoDet Pest Detection System ===");
+  logMessage(LOG_INFO, "=== Pest Detection System ===");
   logMessage(LOG_INFO, "Initializing ESP32-S3 with TensorFlow Lite...");
   
   // Log initial memory status
@@ -1314,7 +1314,7 @@ void setup() {
   });
 
   // Try to connect; if it fails, start configuration portal
-  if (!wifiManager.autoConnect("NanoDet-Setup")) {
+  if (!wifiManager.autoConnect("InsectRecog-Setup")) {
     logMessage(LOG_ERROR, "Failed to connect to WiFi and hit timeout");
     ESP.restart();
     delay(1000);
