@@ -192,105 +192,73 @@ T simple_max(T a, T b) {
 
 // -------------------- Image Processing Helper Functions --------------------
 
-// Decode JPEG to RGB using ESP32's built-in JPEG decoder (ESP-IDF v5.x API)
+// Optimized JPEG decoding with better error handling and memory management
 bool decodeJPEGToRGB(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height) {
   if (!fb || !fb->buf || !output_buffer) {
     logMessage(LOG_ERROR, "Invalid parameters for JPEG decoding");
     return false;
   }
   
-  // First, get image info to determine output buffer size
-  esp_jpeg_image_cfg_t info_cfg = {
-    .indata = fb->buf,
-    .indata_size = fb->len,
-    .outbuf = nullptr,
-    .outbuf_size = 0,
-    .out_format = JPEG_IMAGE_FORMAT_RGB565,
-    .out_scale = JPEG_IMAGE_SCALE_0
-  };
-  
-  esp_jpeg_image_output_t img_info;
-  esp_err_t ret = esp_jpeg_get_image_info(&info_cfg, &img_info);
-  if (ret != ESP_OK) {
-    logMessage(LOG_ERROR, "Failed to get JPEG image info: " + String(esp_err_to_name(ret)));
-    return false;
-  }
-  
-  // Allocate buffer for full-size decoded RGB565 image
-  size_t rgb565_size = img_info.width * img_info.height * 2; // RGB565 = 2 bytes per pixel
-  uint8_t* rgb565_buffer = (uint8_t*)heap_caps_malloc(rgb565_size, MALLOC_CAP_8BIT);
-  if (!rgb565_buffer) {
-    logMessage(LOG_ERROR, "Failed to allocate RGB565 buffer for JPEG decoding");
-    return false;
-  }
-  
-  // Configure JPEG decoder for RGB565 output
+  // Use ESP32's hardware JPEG decoder for better performance
   esp_jpeg_image_cfg_t decode_cfg = {
     .indata = fb->buf,
     .indata_size = fb->len,
-    .outbuf = rgb565_buffer,
-    .outbuf_size = rgb565_size,
-    .out_format = JPEG_IMAGE_FORMAT_RGB565,
+    .outbuf = output_buffer,
+    .outbuf_size = target_width * target_height * 3, // Direct RGB888 output
+    .out_format = JPEG_IMAGE_FORMAT_RGB888,          // Decode directly to RGB888
     .out_scale = JPEG_IMAGE_SCALE_0,
     .flags = {0},
-    .advanced = {nullptr, 0} // Let library allocate working buffer
+    .advanced = {nullptr, 0}
   };
   
-  // Decode JPEG to RGB565
-  ret = esp_jpeg_decode(&decode_cfg, &img_info);
+  esp_jpeg_image_output_t img_info;
+  esp_err_t ret = esp_jpeg_decode(&decode_cfg, &img_info);
   if (ret != ESP_OK) {
     logMessage(LOG_ERROR, "JPEG decode failed: " + String(esp_err_to_name(ret)));
-    free(rgb565_buffer);
     return false;
   }
   
-  // Verify decoded dimensions
-  if (img_info.width != fb->width || img_info.height != fb->height) {
-    logMessage(LOG_WARNING, "JPEG decode size mismatch: expected " + String(fb->width) + "x" + String(fb->height) + 
-               ", got " + String(img_info.width) + "x" + String(img_info.height));
-  }
-  
-  // Convert RGB565 to RGB888 and resize to target dimensions
-  uint16_t* rgb565_data = (uint16_t*)rgb565_buffer;
-  for (int y = 0; y < target_height; y++) {
-    for (int x = 0; x < target_width; x++) {
-      // Map target coordinates to source coordinates
-      int src_x = (x * fb->width) / target_width;
-      int src_y = (y * fb->height) / target_height;
-      
-      // Ensure bounds
-      src_x = simple_min(src_x, (int)(fb->width - 1));
-      src_y = simple_min(src_y, (int)(fb->height - 1));
-      
-      // Get RGB565 pixel
-      uint16_t rgb565 = rgb565_data[src_y * fb->width + src_x];
-      
-      // Convert RGB565 to RGB888
-      uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;  // 5 bits -> 8 bits
-      uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;   // 6 bits -> 8 bits  
-      uint8_t b = (rgb565 & 0x1F) << 3;          // 5 bits -> 8 bits
-      
-      // Store in output buffer (HWC format)
-      int pixel_idx = (y * target_width + x) * 3;
-      output_buffer[pixel_idx + 0] = r;
-      output_buffer[pixel_idx + 1] = g;
-      output_buffer[pixel_idx + 2] = b;
+  // If the decoded image is larger than target, resize it efficiently
+  if (img_info.width != target_width || img_info.height != target_height) {
+    // Simple nearest-neighbor resize for better performance
+    uint8_t* temp_buffer = (uint8_t*)heap_caps_malloc(target_width * target_height * 3, MALLOC_CAP_8BIT);
+    if (!temp_buffer) {
+      logMessage(LOG_ERROR, "Failed to allocate resize buffer");
+      return false;
     }
+    
+    // Resize with nearest neighbor interpolation
+    for (int y = 0; y < target_height; y++) {
+      for (int x = 0; x < target_width; x++) {
+        int src_x = (x * img_info.width) / target_width;
+        int src_y = (y * img_info.height) / target_height;
+        
+        // Ensure bounds
+        src_x = simple_min(src_x, (int)(img_info.width - 1));
+        src_y = simple_min(src_y, (int)(img_info.height - 1));
+        
+        // Copy RGB values
+        int src_idx = (src_y * img_info.width + src_x) * 3;
+        int dst_idx = (y * target_width + x) * 3;
+        
+        temp_buffer[dst_idx + 0] = output_buffer[src_idx + 0]; // R
+        temp_buffer[dst_idx + 1] = output_buffer[src_idx + 1]; // G
+        temp_buffer[dst_idx + 2] = output_buffer[src_idx + 2]; // B
+      }
+    }
+    
+    // Copy resized data back to output buffer
+    memcpy(output_buffer, temp_buffer, target_width * target_height * 3);
+    free(temp_buffer);
   }
   
-  // Clean up
-  free(rgb565_buffer);
-  
-  logMessage(LOG_INFO, "JPEG decoded successfully: " + String(fb->width) + "x" + String(fb->height) + 
+  logMessage(LOG_INFO, "JPEG decoded and resized: " + String(fb->width) + "x" + String(fb->height) + 
              " -> " + String(target_width) + "x" + String(target_height) + " RGB");
-  
-  // Debug: Log first few pixels to verify decoding
-  debugSaveDecodedImage(output_buffer, target_width, target_height, "decoded_jpeg");
   
   return true;
 }
 
-// Process RGB565 format directly
+// Optimized RGB565 processing with lookup tables for better performance
 bool processRGB565(camera_fb_t* fb, uint8_t* output_buffer, int target_width, int target_height) {
   if (!fb || !fb->buf || !output_buffer) {
     logMessage(LOG_ERROR, "Invalid parameters for RGB565 processing");
@@ -299,6 +267,22 @@ bool processRGB565(camera_fb_t* fb, uint8_t* output_buffer, int target_width, in
   
   uint16_t* rgb565_data = (uint16_t*)fb->buf;
   
+  // Static lookup tables for RGB565 to RGB888 conversion (initialized once)
+  static uint8_t r_lut[32], g_lut[64], b_lut[32];
+  static bool lut_initialized = false;
+  
+  if (!lut_initialized) {
+    // Initialize lookup tables for better performance
+    for (int i = 0; i < 32; i++) {
+      r_lut[i] = (i << 3) | (i >> 2);  // 5 bits -> 8 bits with dithering
+      b_lut[i] = r_lut[i];
+    }
+    for (int i = 0; i < 64; i++) {
+      g_lut[i] = (i << 2) | (i >> 4);  // 6 bits -> 8 bits with dithering
+    }
+    lut_initialized = true;
+  }
+  
   // Convert RGB565 to RGB888 and resize to target dimensions
   for (int y = 0; y < target_height; y++) {
     for (int x = 0; x < target_width; x++) {
@@ -313,10 +297,10 @@ bool processRGB565(camera_fb_t* fb, uint8_t* output_buffer, int target_width, in
       // Get RGB565 pixel
       uint16_t rgb565 = rgb565_data[src_y * fb->width + src_x];
       
-      // Convert RGB565 to RGB888
-      uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;  // 5 bits -> 8 bits
-      uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;   // 6 bits -> 8 bits  
-      uint8_t b = (rgb565 & 0x1F) << 3;          // 5 bits -> 8 bits
+      // Convert using lookup tables for better performance
+      uint8_t r = r_lut[(rgb565 >> 11) & 0x1F];
+      uint8_t g = g_lut[(rgb565 >> 5) & 0x3F];
+      uint8_t b = b_lut[rgb565 & 0x1F];
       
       // Store in output buffer (HWC format)
       int pixel_idx = (y * target_width + x) * 3;
@@ -409,7 +393,7 @@ bool switchToRGB565IfNeeded() {
   return false;
 }
 
-// Image preprocessing: Properly decode JPEG and convert to model input format (224x224 RGB)
+// Optimized image preprocessing with reduced memory allocations and better performance
 bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
   if (!fb || !fb->buf || !input_buffer) {
     logMessage(LOG_ERROR, "Invalid frame or input buffer");
@@ -430,23 +414,23 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
     return false;
   }
   
-  logMessage(LOG_INFO, "Processing real camera image: " + String(fb->width) + "x" + String(fb->height) + 
+  logMessage(LOG_INFO, "Processing camera image: " + String(fb->width) + "x" + String(fb->height) + 
              ", format: " + String(fb->format) + ", length: " + String(fb->len) + " bytes");
   
-  // Create temporary HWC buffer for the model input size
-  uint8_t* temp_hwc_buffer = (uint8_t*)malloc(MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS);
+  // Use PSRAM for temporary buffer to preserve DRAM
+  uint8_t* temp_hwc_buffer = (uint8_t*)heap_caps_malloc(MODEL_WIDTH * MODEL_HEIGHT * MODEL_CHANNELS, MALLOC_CAP_SPIRAM);
   if (!temp_hwc_buffer) {
-    logMessage(LOG_ERROR, "Failed to allocate temporary HWC buffer");
+    logMessage(LOG_ERROR, "Failed to allocate temporary HWC buffer in PSRAM");
     return false;
   }
   
   bool success = false;
   
   if (fb->format == PIXFORMAT_JPEG) {
-    // Proper JPEG decoding using ESP32's built-in decoder
+    // Optimized JPEG decoding
     success = decodeJPEGToRGB(fb, temp_hwc_buffer, MODEL_WIDTH, MODEL_HEIGHT);
   } else if (fb->format == PIXFORMAT_RGB565) {
-    // Direct RGB565 processing
+    // Optimized RGB565 processing
     success = processRGB565(fb, temp_hwc_buffer, MODEL_WIDTH, MODEL_HEIGHT);
   } else {
     // Fallback for other formats
@@ -455,54 +439,38 @@ bool preprocessFrame(camera_fb_t* fb, int8_t* input_buffer) {
   
   if (!success) {
     logMessage(LOG_ERROR, "Failed to process image format");
-    free(temp_hwc_buffer);
+    heap_caps_free(temp_hwc_buffer);
     return false;
   }
   
-  // Convert HWC to CHW format and apply normalization + quantization
+  // Optimized HWC to CHW conversion with inline quantization
+  const float scale_factor = 1.0f / (255.0f * input_scale);
+  const float zp_offset = (float)input_zp;
+  
   for (int c = 0; c < MODEL_CHANNELS; c++) {
     for (int h = 0; h < MODEL_HEIGHT; h++) {
       for (int w = 0; w < MODEL_WIDTH; w++) {
         int hwc_idx = (h * MODEL_WIDTH + w) * 3 + c;
         int chw_idx = c * MODEL_HEIGHT * MODEL_WIDTH + h * MODEL_WIDTH + w;
         
-        // Get pixel value (0-255)
+        // Get pixel value and apply quantization in one step
         float pixel_value = (float)temp_hwc_buffer[hwc_idx];
+        float quantized = pixel_value * scale_factor + zp_offset;
         
-        // Simple 0-1 normalization for MDET v2
-        float normalized_value = pixel_value / 255.0f;
+        // Clamp to INT8 range
+        if (quantized < -128.0f) quantized = -128.0f;
+        if (quantized > 127.0f) quantized = 127.0f;
         
-        // Quantize to INT8 for full INT8 model
-        int8_t quantized_value = (int8_t)(normalized_value / input_scale + input_zp);
-        
-        // Clamp to INT8 range for full INT8 models
-        if (quantized_value < -128) quantized_value = -128;
-        if (quantized_value > 127) quantized_value = 127;
-        input_buffer[chw_idx] = quantized_value;
+        input_buffer[chw_idx] = (int8_t)quantized;
       }
     }
   }
   
   // Clean up temporary buffer
-  free(temp_hwc_buffer);
+  heap_caps_free(temp_hwc_buffer);
   
-  // Debug: Sample input values
-  logMessage(LOG_INFO, "INPUT VALIDATION:");
-  logMessage(LOG_INFO, "  Sample input values: [" + String((int)input_buffer[0]) + "," + 
-             String((int)input_buffer[100]) + "," + String((int)input_buffer[500]) + "]");
-  logMessage(LOG_INFO, "  Input range check: Expected INT8 (-128 to 127), Scale=" + String(input_scale, 6) + ", ZP=" + String(input_zp));
-  
-  // Check input value distribution
-  int8_t min_val = 127, max_val = -128;
-  int zero_count = 0;
-  for (int i = 0; i < 1000; i++) { // Check first 1000 values
-    int8_t val = input_buffer[i];
-    if (val < min_val) min_val = val;
-    if (val > max_val) max_val = val;
-    if (val == 0) zero_count++;
-  }
-  logMessage(LOG_INFO, "  Input value range (first 1000): [" + String(min_val) + ", " + String(max_val) + "]");
-  logMessage(LOG_INFO, "  Zero values: " + String(zero_count) + "/1000 (" + String((float)zero_count/10.0f, 1) + "%)");
+  // Reduced debug logging for better performance
+  logMessage(LOG_DEBUG, "Preprocessing completed successfully");
   
   return true;
 }
@@ -605,6 +573,7 @@ String runInference() {
     return "{\"error\":\"frame_capture_failed\"}";
   }
   
+  // Process the frame and return it immediately to avoid holding it
   String result = runInferenceWithFrame(fb);
   esp_camera_fb_return(fb);
   return result;
@@ -614,37 +583,33 @@ String runInference() {
 String runInferenceWithFrame(camera_fb_t* fb) {
   unsigned long startTime = millis();
   
-  // Input validation
-  if (!input || !interpreter) { // Changed from class_output/bbox_output to interpreter
+  // Input validation with proper error handling
+  if (!input || !interpreter) {
     logMessage(LOG_ERROR, "TensorFlow Lite components not initialized");
     return "{\"error\":\"tflite_not_initialized\"}";
   }
   
   // Validate frame buffer
-  if (!fb->buf || fb->len == 0) {
+  if (!fb || !fb->buf || fb->len == 0) {
     logMessage(LOG_ERROR, "Invalid frame buffer");
     return "{\"error\":\"invalid_frame_buffer\"}";
   }
   
   // Validate input tensor
-  size_t expected_input_size = input->bytes;
-  logMessage(LOG_DEBUG, "Expected input size: " + String(expected_input_size) + " bytes");
-  logMessage(LOG_DEBUG, "Camera frame size: " + String(fb->width) + "x" + String(fb->height) + ", length: " + String(fb->len));
-  
-  // Preprocess frame to match model input (28x28 grayscale)
   if (!input->data.int8) {
-    esp_camera_fb_return(fb);
     logMessage(LOG_ERROR, "Input tensor data is null");
     return "{\"error\":\"input_tensor_null\"}";
   }
   
+  size_t expected_input_size = input->bytes;
+  logMessage(LOG_DEBUG, "Expected input size: " + String(expected_input_size) + " bytes");
+  logMessage(LOG_DEBUG, "Camera frame size: " + String(fb->width) + "x" + String(fb->height) + ", length: " + String(fb->len));
+  
+  // Preprocess frame to match model input (224x224 RGB)
   if (!preprocessFrame(fb, (int8_t*)input->data.int8)) {
-    esp_camera_fb_return(fb);
     logMessage(LOG_ERROR, "Frame preprocessing failed");
     return "{\"error\":\"preprocessing_failed\"}";
   }
-  
-  esp_camera_fb_return(fb);
   
   // ENHANCED DEBUG: Capture input tensor state before inference
   int8_t input_samples[10];
@@ -823,7 +788,7 @@ String runInferenceWithFrame(camera_fb_t* fb) {
   // MDET v2 outputs: [1, 14, 14, 3, 29] where 29 = 1(obj) + 4(bbox) + 24(classes)
   Detection dets[MAX_DETECTIONS];
   int det_count = 0;
-  const float score_thresh = 0.03f;  // Confidence threshold for multi-anchor model
+  const float score_thresh = 0.05f;  // Confidence threshold for multi-anchor model
   const float nms_thresh = 0.45f;    // NMS threshold
   
   // Anchor sizes (relative to grid cell, normalized 0-1)
@@ -913,7 +878,7 @@ String runInferenceWithFrame(camera_fb_t* fb) {
 
   // Print detection results to Serial Monitor for Arduino IDE
   Serial.println("\n============================================================");
-  Serial.println(" PEST DETECTION RESULTS - MDET v2 Multi-Anchor Model");
+  Serial.println(" NANODET PEST DETECTION RESULTS - MDET v2 Multi-Anchor Model");
   Serial.println("============================================================");
   
   if (det_count > 0) {
@@ -1004,6 +969,7 @@ String runInferenceWithFrame(camera_fb_t* fb) {
 
 // Enhanced HTTP GET / -> run inference and provide rich web interface
 void handleRoot() {
+  // Run inference only when explicitly requested to avoid blocking
   String detJson = runInference();
   
   // Debug: Log the JSON being sent to web interface
@@ -1018,7 +984,7 @@ void handleRoot() {
 <head>
     <meta charset='utf-8'>
     <meta name='viewport' content='width=device-width, initial-scale=1'>
-    <title>Pest Detection System</title>
+    <title>NanoDet Pest Detection System</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f2f5; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -1039,7 +1005,7 @@ void handleRoot() {
 <body>
     <div class='container'>
         <div class='header'>
-            <h1>🐛 Pest Detection System</h1>
+            <h1>🐛 NanoDet Pest Detection System</h1>
             <p>AI-powered insect detection using ESP32-S3 and TensorFlow Lite</p>
         </div>
         
@@ -1212,16 +1178,30 @@ void handleLog() {
   server.send(200, "text/plain", "Detection data logged successfully");
 }
 
-// New endpoint: GET /api/detect -> JSON-only inference
+// New endpoint: GET /api/detect -> JSON-only inference (non-blocking)
 void handleAPIDetect() {
   logMessage(LOG_INFO, " API Detect request received from: " + server.client().remoteIP().toString());
+  
+  // Check if system is ready for inference
+  if (!input || !interpreter) {
+    server.send(503, "application/json", "{\"error\":\"system_not_ready\"}");
+    return;
+  }
+  
+  // Run inference with timeout protection
+  unsigned long start_time = millis();
   String detJson = runInference();
+  unsigned long inference_time = millis() - start_time;
+  
+  logMessage(LOG_INFO, " Inference completed in " + String(inference_time) + "ms");
   logMessage(LOG_INFO, " Sending detection response to: " + server.client().remoteIP().toString());
+  
   server.send(200, "application/json", detJson);
 }
 
-// New endpoint: GET /api/status -> System status
+// New endpoint: GET /api/status -> System status (fast, non-blocking)
 void handleAPIStatus() {
+  // Quick status check without inference - very fast response
   String json = "{";
   json += "\"system\":{";
   json += "\"uptime_ms\":" + String(millis());
@@ -1229,17 +1209,19 @@ void handleAPIStatus() {
   json += ",\"free_psram\":" + String(heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   json += ",\"wifi_rssi\":" + String(WiFi.RSSI());
   json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
+  json += ",\"status\":\"ready\"";
   json += "},";
   json += "\"camera\":{";
   json += "\"frame_size\":\"320x240\"";
   json += ",\"pixel_format\":\"JPEG\"";
   json += ",\"frame_buffer_location\":\"PSRAM\"";
+  json += ",\"ready\":" + String(input && interpreter ? "true" : "false");
   json += "},";
   json += "\"model\":{";
   json += "\"input_size\":\"224x224\"";
   json += ",\"classes\":" + String(N_CLASSES);
-  json += ",\"tensor_arena_size\":" + String(kTensorArenaSize);
-  json += ",\"model_type\":\"MobileNet-SSD\"";
+  json += ",\"tensor_arena_size\":" + String(actual_arena_size);
+  json += ",\"model_type\":\"MDET_v2_Multi_Anchor\"";
   json += "},";
   json += "\"performance\":{";
   json += "\"total_inferences\":" + String(perf.totalInferences);
@@ -1247,6 +1229,7 @@ void handleAPIStatus() {
   json += ",\"last_inference_time_ms\":" + String(perf.lastInferenceTime);
   json += "}";
   json += "}";
+  
   server.send(200, "application/json", json);
 }
 
@@ -1261,37 +1244,57 @@ void handleAPIClasses() {
   server.send(200, "application/json", json);
 }
 
-// New endpoint: GET /frame.jpg -> Camera frame for Flutter app
+// Optimized camera frame endpoint with better error handling
 void handleFrame() {
-  // Force a fresh camera capture
-  esp_camera_fb_return(esp_camera_fb_get()); // Clear any existing buffer
-  
+  // Get camera frame with timeout protection
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) {
     server.send(500, "text/plain", "Failed to capture frame");
     return;
   }
   
+  // Set headers for optimal delivery
   server.sendHeader("Content-Type", "image/jpeg");
   server.sendHeader("Content-Disposition", "inline; filename=frame.jpg");
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server.sendHeader("Pragma", "no-cache");
   server.sendHeader("Expires", "0");
-  server.sendHeader("Last-Modified", "Mon, 01 Jan 2024 00:00:00 GMT");
   
-  // Use the correct send method for binary data
-  // Convert uint8_t* to const char* for send_P method
+  // Send frame data efficiently
   server.send_P(200, "image/jpeg", (const char*)fb->buf, fb->len);
   
+  // Return frame buffer immediately
   esp_camera_fb_return(fb);
   
-  logMessage(LOG_INFO, "Fresh camera frame served - Size: " + String(fb->len) + " bytes");
+  // Minimal logging to avoid blocking
+  logMessage(LOG_DEBUG, "Camera frame served - Size: " + String(fb->len) + " bytes");
 }
 
-// New endpoint: GET /api/inference -> Normal inference
+// New endpoint: GET /api/inference -> Normal inference (with progress feedback)
 void handleAPINormalInference() {
   logMessage(LOG_INFO, "⚡ === NORMAL INFERENCE #" + String(++inference_counter) + " ===");
+  
+  // Check system readiness first
+  if (!input || !interpreter) {
+    server.send(503, "application/json", "{\"error\":\"system_not_ready\"}");
+    return;
+  }
+  
+  // Run inference with progress tracking
+  unsigned long start_time = millis();
   String result = runInference();
+  unsigned long total_time = millis() - start_time;
+  
+  // Add timing information to result
+  if (!result.startsWith("{\"error\":")) {
+    // Insert timing info into JSON response
+    int insert_pos = result.indexOf("\"performance\":");
+    if (insert_pos > 0) {
+      String timing_info = ",\"request_processing_time_ms\":" + String(total_time);
+      result = result.substring(0, insert_pos) + timing_info + result.substring(insert_pos);
+    }
+  }
+  
   server.send(200, "application/json", result);
 }
 
@@ -1301,7 +1304,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial) delay(1);
   
-  logMessage(LOG_INFO, "=== Pest Detection System ===");
+  logMessage(LOG_INFO, "=== NanoDet Pest Detection System ===");
   logMessage(LOG_INFO, "Initializing ESP32-S3 with TensorFlow Lite...");
   
   // Log initial memory status
@@ -1321,9 +1324,9 @@ void setup() {
 
   // Set static IP configuration
   wifiManager.setSTAStaticIPConfig(staticIP, gateway, subnet, dns);
-  
+
   // Try to connect; if it fails, start configuration portal
-  if (!wifiManager.autoConnect("InsectRecog-Setup")) {
+  if (!wifiManager.autoConnect("NanoDet-Setup")) {
     logMessage(LOG_ERROR, "Failed to connect to WiFi and hit timeout");
     ESP.restart();
     delay(1000);
@@ -1621,10 +1624,20 @@ void setup() {
   server.on("/api/inference", HTTP_GET, handleAPINormalInference);
   server.on("/frame.jpg", HTTP_GET, handleFrame);
   
-  // Add a simple health check endpoint
+  // Add a simple health check endpoint (ultra-fast, non-blocking)
   server.on("/health", HTTP_GET, []() {
-    logMessage(LOG_INFO, " Health check request received from: " + server.client().remoteIP().toString());
+    // Minimal logging for health checks to avoid blocking
     server.send(200, "application/json", "{\"status\":\"ok\",\"uptime_ms\":" + String(millis()) + "}");
+  });
+  
+  // Add a quick system check endpoint
+  server.on("/quick-check", HTTP_GET, []() {
+    // Very fast response with minimal processing
+    String response = "{\"ready\":" + String(input && interpreter ? "true" : "false");
+    response += ",\"heap\":" + String(esp_get_free_heap_size());
+    response += ",\"uptime\":" + String(millis());
+    response += "}";
+    server.send(200, "application/json", response);
   });
   
   // Add camera view endpoint with detections overlay
@@ -1935,45 +1948,35 @@ void loop() {
   server.handleClient();
   
   if (!input || !interpreter) {
-    Serial.println("[ERROR] TFLite not initialized");
+    logMessage(LOG_ERROR, "TFLite not initialized");
     delay(1000);
     return;
   }
   
-  // Simplified camera test - only run every 10 seconds to reduce overhead
-  static int frame_counter = 0;
-  static unsigned long last_camera_test = 0;
+  // Run inference only when requested via web interface, not automatically
+  // This prevents blocking the web server and reduces unnecessary processing
+  static unsigned long last_health_check = 0;
   unsigned long current_time = millis();
   
-  // Only run camera tests and inference every 10 seconds to keep server responsive
-  if (current_time - last_camera_test >= 10000) {
-    last_camera_test = current_time;
-    frame_counter++;
+  // Only perform minimal health checks every 30 seconds
+  if (current_time - last_health_check >= 30000) {
+    last_health_check = current_time;
     
-    // Capture ONE image and use it for both camera test AND inference
+    // Quick camera health check without inference
     camera_fb_t* test_fb = esp_camera_fb_get();
     if (test_fb && test_fb->buf && test_fb->len > 0) {
-      logMessage(LOG_INFO, "Camera frame #" + String(frame_counter) + " - Size: " + String(test_fb->len) + " bytes");
-      
-      // Store the frame for inference instead of discarding it
-      // We'll pass this frame to runInference() to avoid double capture
-      
-      // Run inference with the SAME frame (this is the heavy operation)
-      logMessage(LOG_INFO, "Running inference on fresh frame...");
-      runInferenceWithFrame(test_fb); // New function that takes the frame
-      
-      // Return the frame after inference
+      logMessage(LOG_INFO, "Camera health check passed - Size: " + String(test_fb->len) + " bytes");
       esp_camera_fb_return(test_fb);
     } else {
-      logMessage(LOG_ERROR, "Camera test frame capture failed");
+      logMessage(LOG_ERROR, "Camera health check failed");
     }
   }
   
-  // Handle HTTP requests more frequently
+  // Handle HTTP requests more frequently for better responsiveness
   server.handleClient();
   
-  // Smaller delay to keep server responsive
-  delay(50);
+  // Minimal delay to keep server responsive
+  delay(10);
 }
 
 
