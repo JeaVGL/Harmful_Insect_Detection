@@ -189,7 +189,9 @@ https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32
 - Hardcoded IP adress: http://192.168.1.200/
 - **Make sure this adress is available on the network !!**
 - **Make sure the hardcoded adress matches the router's IP !!**
-- **You might have to modify the adress accordingly.** 
+- **You might have to modify the adress accordingly.**
+
+  The last version removed most of the Web blocs and latency and the double image capture. However, this version was only tested during a short period of time. If any error occurs using this version, you will fing in the GitHub repository history the previous version that went under much more testing.
 ---
 
 ## Quick repo checklist
